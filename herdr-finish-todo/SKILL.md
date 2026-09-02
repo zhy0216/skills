@@ -36,9 +36,9 @@ description: 使用 Herdr 为 todo 队列创建独立 Git worktree，并在最�
 3. 确认 `opencode` 可执行，并确认模型存在：
 
    ```bash
-   command -v opencode
-   opencode models qwen3.8-flash
-   ```
+    command -v opencode
+    opencode models bailian-token-plan/qwen3.8-flash
+    ```
 
    默认必须使用 `bailian-token-plan/qwen3.8-flash`。若用户在调用时显式指定了模型，则使用用户指定的模型，并同样先用 `opencode models` 确认其存在。即使目标模型当前是默认模型，也要显式传入；不可静默改用其他模型。
 

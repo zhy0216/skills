@@ -37,10 +37,10 @@ disable-model-invocation: true
 3. 确认 `opencode` 可执行，并确认模型存在：
 
    ```bash
-   command -v opencode
-   opencode models qwen3.8-flash
-   opencode models qwen3.8-max
-   ```
+    command -v opencode
+    opencode models bailian-token-plan/qwen3.8-flash
+    opencode models bailian-token-plan/qwen3.8-max
+    ```
 
    模型按任务难度选择：`difficulty: easy` 或 `medium` 用 `bailian-token-plan/qwen3.8-flash`，`difficulty: hard` 用 `bailian-token-plan/qwen3.8-max`。两个模型都要先确认存在。若用户在调用时显式指定了模型（如 `--model <provider/model>`），则所有任务统一使用用户指定的模型（覆盖难度选择），并同样先确认其存在。即使目标模型当前是默认模型，也要显式传入；不可静默改用其他模型。
 

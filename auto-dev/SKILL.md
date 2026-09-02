@@ -94,13 +94,15 @@ plan name 用短横线小写 slug（如 `add-user-auth`）。检查 `plans/` 下
 
 ## 4. 自动开始执行
 
-写完计划和队列后自动拉起执行，不要只留一条命令让用户手动跑。
+写完计划和队列后自动拉起执行，不要只留一条命令让用户手动跑。**进入执行阶段前必须先 git commit**：执行端要求干净工作区，计划文件不提交就不允许开始执行。
 
-1. 向用户报告：意图结论、plan 路径、任务队列概览（顺序 + 依赖 + 每个文件的难度与将用的模型）、哪些任务可并行。
-2. 检查 `test "${HERDR_ENV:-}" = 1`：
+1. 检查工作区并提交计划文件：运行 `git status --porcelain`。
+   - 若未提交内容只有刚写的 `plans/<plan-name>/` 计划文件，**先提交再往下走**：`git add plans/<plan-name> && git commit -m "chore(plans): add <plan-name> plan and todos"`；
+   - 若还存在其他用户改动，停止并报告，请用户先处理，不要自行 stash、提交或丢弃那些改动。
+2. 向用户报告：意图结论、plan 路径、任务队列概览（顺序 + 依赖 + 每个文件的难度与将用的模型）、哪些任务可并行、计划文件已提交的 commit。
+3. 检查 `test "${HERDR_ENV:-}" = 1`：
    - 通过 → 继续自动启动；
    - 失败 → 执行端依赖 Herdr，无法自动启动；改为告知用户在 Herdr 管理的新 session 中运行 `$herdr-finish-plan <plan-name>`，然后结束。
-3. 检查工作区：运行 `git status --porcelain`。若未提交内容只有刚写的 `plans/<plan-name>/` 计划文件，询问用户是否提交（执行端要求干净工作区，这是启动前提）；存在其他用户改动时停止并报告，不要自行 stash、提交或丢弃。
 4. 从当前 pane 分出一个同级 pane，保持在仓库根目录、不打扰用户焦点：
 
    ```bash
@@ -123,7 +125,7 @@ plan name 用短横线小写 slug（如 `add-user-auth`）。检查 `plans/` 下
 
 ## 硬性规则
 
-- 只产出 `plans/<plan-name>/` 下的文件；不修改业务代码、不提交未经用户同意的 commit。
+- 只产出 `plans/<plan-name>/` 下的文件；不修改业务代码。进入执行阶段前必须先提交计划文件（这是唯一允许的自动 commit）；用户的其他改动一律不得代为提交。
 - plan 必须基于对仓库的实际搜索与分析，不允许凭空设计方案。
 - todo 队列必须严格符合 herdr-finish-todo 的格式（README 顺序 + 数字前缀文件 + 验收条件 + 显式依赖）。
 - 关键歧义先问用户；次要假设必须写进 plan。
