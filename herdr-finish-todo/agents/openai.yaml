@@ -1,0 +1,7 @@
+interface:
+  display_name: "Herdr Finish TODO"
+  short_description: "用 Herdr 并行完成、整合并清理 todo worktree"
+  default_prompt: "使用 $herdr-finish-todo 通过 Herdr 并行完成当前仓库的 todo 队列。"
+
+policy:
+  allow_implicit_invocation: false
