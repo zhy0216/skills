@@ -109,10 +109,10 @@ plan name 用短横线小写 slug（如 `add-user-auth`）。检查 `plans/` 下
    herdr pane split --current --direction right --cwd <repo-root> --no-focus
    ```
 
-5. 在新 pane 启动 auto 模式的 OpenCode（名称符合 `[a-z][a-z0-9_-]{0,31}`，如 `plan-<plan-slug>`）：
+5. 在新 pane 启动 auto 模式、使用 flash 模型的 OpenCode（名称符合 `[a-z][a-z0-9_-]{0,31}`，如 `plan-<plan-slug>`）：
 
    ```bash
-   herdr agent start plan-<plan-slug> --kind opencode --pane <pane-id> -- --auto
+   herdr agent start plan-<plan-slug> --kind opencode --pane <pane-id> -- --auto --model bailian-token-plan/qwen3.8-flash
    ```
 
 6. 发送执行指令（不加 `--wait`，执行可能长达数小时）：
