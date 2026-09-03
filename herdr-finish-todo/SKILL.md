@@ -104,13 +104,18 @@ herdr agent start <agent-name> --kind opencode --pane <pane-id> -- --auto --mode
 herdr agent read <agent-name> --source recent-unwrapped --lines 160
 ```
 
-对仍处于 `working`/Thinking 的 OpenCode 采用 **15 分钟监控节奏**：完成一次批量状态检查后，若没有 `done`、`idle` 或 `blocked` 等可操作状态，选择一个正在工作的 agent 做最长 15 分钟的状态感知等待：
+对仍处于 `working`/Thinking 的 OpenCode 采用 **15 分钟监控节奏**：完成一次批量状态检查后，若没有 `done`、`idle` 或 `blocked` 等可操作状态，为**每个**在跑 agent 同时挂一个后台 wait 任务（各自 15 分钟封顶），任一任务先 settle 就立即唤醒——不要只盯着一个 agent 干等，让其他已完成的任务空转排队：
 
 ```bash
-herdr agent wait <agent-name> --timeout 900000
+wake=$(mktemp -u) && mkfifo "$wake"
+for a in <working-agent-1> <working-agent-2> ...; do
+  { herdr agent wait "$a" --timeout 900000; echo "$a"; } >"$wake" 2>/dev/null &
+done
+head -1 "$wake"
+kill $(jobs -p) 2>/dev/null; rm -f "$wake"
 ```
 
-wait 若因 agent settle 而提前返回，立即处理并同时刷新所有任务；若返回 `timeout`，这只是下一个 15 分钟检查点，不是失败、停滞或需要中断的证据。在该检查点用一次 `herdr agent list` 批量刷新，只对状态变化、完成或 blocked 的 agent 进一步 `get/read`，然后再进入下一个 15 分钟等待。不要用 15 秒或其他短超时循环高频轮询。
+`head -1` 返回表示最早有 agent 状态变化或 15 分钟检查点已到，不是失败、停滞或需要中断的证据。唤醒后用一次 `herdr agent list` 批量刷新，对全部进入可操作状态的 agent **按完成先后（先完成的先进入复核与集成）**逐个处理，不等待队列顺序更靠前的任务；随后只对仍在工作的 agent 挂下一轮并行等待。本机 shell（bash 3.2 / zsh 5.9）不支持 `wait -n`，统一用上述 FIFO 写法。不要用 15 秒或其他短超时循环高频轮询。
 
 OpenCode 在复杂任务上可能长时间保持 Thinking。不得仅因 Thinking 持续时间长、一个或多个 15 分钟周期内状态未变、画面相同或 worktree 暂无改动，就发送 `esc`/`ctrl+c`、重启 agent 或改写任务。只有出现明确的错误、进程退出、需要交互的 `blocked` 状态，或用户明确要求停止时，才停止正常等待；若怀疑真正死循环，先收集 `get/read` 和 worktree 证据并向用户报告，不要擅自中断。
 
@@ -169,7 +174,12 @@ git branch -d <task-branch>
 
 若 OpenCode 仍占用 workspace，先用 `herdr agent send-keys <agent-name> ctrl+c` 并确认退出，再重试。仅当分支已经合并、worktree 干净、路径和 workspace ID 均与本轮记录完全一致时，才可考虑 `herdr worktree remove --force`；否则停止并报告，不得删除可能未保存的工作。
 
-清理成功后，把任务标为完成并立刻从队列中选择下一个依赖已满足的任务，创建新 worktree 和 OpenCode agent，使并行窗口回到最多 5 个。不要等待其他四个任务完成后才补位。
+每轮合并结束后按以下优先级决定下一步：
+
+1. **先继续合**：只要还有已完成、待集成的任务（含在上一轮集成期间新通过复核的），立即持集成锁继续合并，不要把合并队列晾在一边去分发新任务。
+2. **再补位**：合并队列清空、有空闲槽位且队列中还有可运行任务时，才立即分发新任务，不等任何其他在跑任务结束。
+
+分发新任务即创建新 worktree 和 OpenCode agent，使并行窗口回到最多 5 个；清理成功后把任务标为完成。存在待合并任务，或存在可运行任务且有空槽时，协调器都不得空转进入等待循环。
 
 ## 7. 收尾
 
@@ -186,10 +196,10 @@ git branch -d <task-branch>
 
 ## 硬性规则
 
-- 最多 5 个并行任务，使用完成即补位的滑动窗口。
+- 最多 5 个并行任务，使用滑动窗口；每轮合并后优先继续合并已完成的待集成任务，合并队列清空且有空槽且队列未清空时才分发新任务，不得空转等待。
 - 默认一个 todo 文件对应一个 worktree 和一个最终 commit。
 - OpenCode 必须通过 Herdr 启动，并显式使用 `--auto --model <模型>`；模型默认为 `bailian-token-plan/qwen3.8-flash`，用户显式指定时使用指定模型。
-- OpenCode 处于 `working`/Thinking 时默认每 15 分钟批量检查一次；短超时或长时间 Thinking 都不是中断依据。
+- OpenCode 处于 `working`/Thinking 时，为所有在跑 agent 并行挂后台等待，任一 settle 即唤醒并按完成先后处理；每轮等待最长 15 分钟，短超时或长时间 Thinking 都不是中断依据。
 - 单个任务运行超过 2 小时未完成即停掉该 agent 并停止整个 Workflow，报 blocker 后等待用户决定。
 - OpenCode 只写自己的任务分支；协调器独占原分支和最终合并。
 - 每个任务必须先 rebase 原分支并解决冲突，再通过仓库级校验和 `git merge --ff-only`。
