@@ -174,14 +174,15 @@ agent 自报完成后，协调器必须在其 worktree 中独立检查：
 
 ## 6. 清理并立即补位
 
-只清理本轮创建且已经成功合并的资源。优先让空闲 OpenCode 正常退出；随后使用记录的 workspace ID：
+只清理本轮创建且已经成功合并的资源。优先让空闲 OpenCode 正常退出；随后关闭 workspace 并在磁盘删除 worktree。不要用 `herdr worktree remove`——它会强制把用户视图切到别的 workspace，导致屏幕跳动：
 
 ```bash
-herdr worktree remove --workspace <workspace-id>
+herdr workspace close <workspace-id>
+git -C <repo-root> worktree remove <worktree-path>
 git branch -d <task-branch>
 ```
 
-若 OpenCode 仍占用 workspace，先用 `herdr agent send-keys <agent-name> ctrl+c` 并确认退出，再重试。仅当分支已经合并、worktree 干净、路径和 workspace ID 均与本轮记录完全一致时，才可考虑 `herdr worktree remove --force`；否则停止并报告，不得删除可能未保存的工作。
+若 OpenCode 仍占用 workspace，先用 `herdr agent send-keys <agent-name> ctrl+c` 并确认退出，再重试。仅当分支已经合并、worktree 干净、路径和 workspace ID 均与本轮记录完全一致时，才可给 `git worktree remove` 加 `--force`；否则停止并报告，不得删除可能未保存的工作。
 
 每轮合并结束后按以下优先级决定下一步：
 
