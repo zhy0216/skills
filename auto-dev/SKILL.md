@@ -1,6 +1,6 @@
 ---
 name: auto-dev
-description: 接收一个开发任务 prompt，结合当前 repo 分析用户意图，写出 plans/{plan-name}/plan.md 方案，按 herdr-finish-todo 的队列格式把任务拆解到 plans/{plan-name}/todos/（每个任务标难度，决定执行时用 flash 还是 max 模型），然后自动通过 Herdr 开新 pane 用 herdr-finish-plan 开始执行。没有 prompt 时进入 repo 探索模式：系统性挖掘仓库所有可提升空间并全部列入 plan。用户说 /auto-dev、"auto dev"、"帮我规划这个开发任务"、"看看这个仓库有什么可以改进的"，或给出一个开发需求希望自动拆解并执行时使用。
+description: 接收一个开发任务 prompt，结合当前 repo 分析用户意图，写出 plans/{plan-name}/plan.md 方案，用 plan-to-todo 把任务拆解到 plans/{plan-name}/todos/ 队列，然后自动通过 Herdr 开新 pane 用 herdr-finish-plan 开始执行。没有 prompt 时进入 repo 探索模式：系统性挖掘仓库所有可提升空间并全部列入 plan。用户说 /auto-dev、"auto dev"、"帮我规划这个开发任务"、"看看这个仓库有什么可以改进的"，或给出一个开发需求希望自动拆解并执行时使用。
 ---
 
 # Auto Dev
@@ -54,43 +54,9 @@ plan name 用短横线小写 slug（如 `add-user-auth`）。检查 `plans/` 下
 - **校验**：仓库级校验命令与验收方式；
 - **风险与假设**。
 
-## 3. 拆任务队列（兼容 herdr-finish-todo 格式）
+## 3. 拆任务队列
 
-在 `plans/<plan-name>/todos/` 下建立任务队列。格式与 herdr-finish-todo 的 `todos/` 队列完全一致——这里只复用格式，不调用该 skill。
-
-### todos/README.md
-
-- 一个"优先级"表格：文件、优先级（P0→P2）、难度（easy / medium / hard）、一句话说明；
-- 一个"## 文件"有序列表，明确执行顺序；
-- 有依赖时逐行标注"依赖 01-xxx"。
-
-### todo 文件
-
-- 文件名数字前缀升序：`01-<slug>.md`、`02-<slug>.md`…
-- **一个 todo 文件 = 一个独立任务 = 一个 worktree = 一个最终 commit**。粒度以"一个 agent 单轮能完成"为准：过大要拆，过碎要合。
-- 文件开头必须声明难度：单独一行 `difficulty: easy | medium | hard`（执行端据此选模型，见"难度判定"）。
-- 每个文件内用 `## T1 · 标题` 小节列条目，每个条目写清：
-  - 要做什么（具体到函数 / 文件 / 行为）；
-  - 预计修改的文件列表；
-  - 验收条件（可验证的标准；需要测试就写明测试要求）；
-  - 前置依赖（依赖哪个 todo 文件 / 条目，没有就写"无"）。
-
-### 拆分原则
-
-- 会改同一批文件的条目放进同一个 todo 文件；文件 / 模块不相交的才分开并行；
-- 依赖必须显式写出（如"先有 01 的数据模型，02 才能做 API"）；
-- 依赖前面实现的测试 / 验证任务，放后面的文件并标依赖；
-- 每个 todo 文件都要能独立跑仓库校验，写清它自己的验证方式。
-
-### 难度判定
-
-为每个 todo 文件给出 `difficulty`，执行端按它选模型（easy/medium → flash，hard → max）：
-
-- **easy**：改一两处、模式明确、照着旁边代码抄就行（改文案、加字段、补校验、调样式）。
-- **medium**：单模块内多文件协作、需要理解一段现有逻辑再改、写新的测试。
-- **hard**：跨模块 / 跨服务、涉及并发、状态机、数据迁移、协议或架构调整、需要设计新的抽象。
-
-拿不准 easy 还是 medium 就写 medium；拿不准 medium 还是 hard 就写 hard——宁可升档，不要为了省模型把硬任务压给弱模型。一个文件里条目难度不一致时按最高的那条定档。
+用 skill 工具加载 `plan-to-todo`，按它把 `plans/<plan-name>/plan.md` 拆解成 `plans/<plan-name>/todos/` 队列。探索模式中标了 `roadmap` 的发现只进 plan，不进队列。
 
 ## 4. 自动开始执行
 
@@ -127,5 +93,5 @@ plan name 用短横线小写 slug（如 `add-user-auth`）。检查 `plans/` 下
 
 - 只产出 `plans/<plan-name>/` 下的文件；不修改业务代码。进入执行阶段前必须先提交计划文件（这是唯一允许的自动 commit）；用户的其他改动一律不得代为提交。
 - plan 必须基于对仓库的实际搜索与分析，不允许凭空设计方案。
-- todo 队列必须严格符合 herdr-finish-todo 的格式（README 顺序 + 数字前缀文件 + 验收条件 + 显式依赖）。
+- 拆 todo 队列必须加载 `plan-to-todo` skill 并按它执行，不自行发挥格式。
 - 关键歧义先问用户；次要假设必须写进 plan。
