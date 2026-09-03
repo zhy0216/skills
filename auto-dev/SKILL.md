@@ -1,64 +1,23 @@
 ---
 name: auto-dev
-description: 接收一个开发任务 prompt，结合当前 repo 分析用户意图，写出 plans/{plan-name}/plan.md 方案，用 plan-to-todo 把任务拆解到 plans/{plan-name}/todos/ 队列，然后自动通过 Herdr 开新 pane 用 herdr-finish-plan 开始执行。没有 prompt 时进入 repo 探索模式：系统性挖掘仓库所有可提升空间并全部列入 plan。用户说 /auto-dev、"auto dev"、"帮我规划这个开发任务"、"看看这个仓库有什么可以改进的"，或给出一个开发需求希望自动拆解并执行时使用。
+description: 接收一个开发任务 prompt（没有则探索 repo 找改进点），用 make-plan 产出 plans/{plan-name}/plan.md 方案，用 plan-to-todo 拆解到 plans/{plan-name}/todos/ 队列，然后自动通过 Herdr 开新 pane 用 herdr-finish-plan 开始执行。用户说 /auto-dev、"auto dev"、"帮我规划这个开发任务并跑起来"、"看看这个仓库有什么可以改进的"，或给出一个开发需求希望自动拆解并执行时使用。
 ---
 
 # Auto Dev
 
-把一个开发需求 prompt 变成"方案 + 可并行执行的任务队列"。本 skill 只做分析和规划，不改业务代码；实现交给新 session 里的 `herdr-finish-plan`。
+把一个开发需求 prompt 变成"方案 + 可并行执行的任务队列"并自动拉起执行。本 skill 只做编排，不改业务代码；实现交给新 session 里的 `herdr-finish-plan`。
 
-`args` 是任务 prompt 本身；用户也可能直接在对话里给出。两者都有时以对话内容为准，`args` 作为补充。
+`args` 是任务 prompt 本身；用户也可能直接在对话里给出。两者都有时以对话内容为准，`args` 作为补充。`args` 为空时 make-plan 会自动进入 repo 探索模式。
 
-**没有 prompt 时**（`args` 为空、对话里也只有"auto dev"之类的调用），进入 **repo 探索模式**，见第 1.5 节。
+## 1. 写 plan
 
-## 1. 输入与意图分析
+用 skill 工具加载 `make-plan`，按它产出 `plans/<plan-name>/plan.md`（含意图分析 / 探索模式的全部规则都在那里）。
 
-1. 完整读取任务 prompt，判断它是什么类型的开发任务（新功能 / bug 修复 / 重构 / 基建 / 迁移…）。
-2. 结合当前 repo 分析：
-   - 读 `README.md`、`AGENTS.md`/`CLAUDE.md`、构建配置和目录结构，理解技术栈与模块划分；
-   - 用搜索定位 prompt 涉及的代码位置，不要凭文件名猜；
-   - 确定仓库级校验命令（typecheck / build / test），后面写进 plan。
-3. 产出意图分析：目标、范围内 / 范围外、技术约束、风险、开放问题。
-   - 会改变方案走向的关键歧义：先问用户，再写 plan；
-   - 次要歧义：采用最合理的默认假设，并在 plan 中写明。
-
-## 1.5 无 prompt：repo 探索模式
-
-没有任务 prompt 时，目标变成"尽力挖掘这个 repo 所有可以提升的空间"，把发现全部列进 plan。
-
-1. 先跑一遍仓库级校验命令（typecheck / build / lint / test，存在哪条跑哪条），失败的、报警告的原样记录。
-2. 系统性排查，逐项过：
-   - **正确性**：报错的测试、明显的 bug、`TODO`/`FIXME`/`XXX`/`HACK` 注释、已知问题文档；
-   - **健壮性**：缺失的错误处理、边界条件、未校验的输入、并发 / 竞态隐患；
-   - **安全**：硬编码密钥、注入风险、过时且有漏洞的依赖（依赖审计命令存在就跑）；
-   - **性能**：明显的慢路径、重复计算、N+1 查询、缺失的缓存 / 索引；
-   - **测试**：覆盖率薄弱的关键模块、完全没有测试的核心路径；
-   - **工程 / DX**：缺失或失效的 CI、慢的构建、缺 lint / format 配置、过时的依赖大版本、缺失或过期的文档；
-   - **代码质量**：重复代码、死代码、过大的文件 / 函数、混乱的模块边界。
-3. 每个发现记录：位置（文件 / 模块）、问题描述、改进建议、优先级（P0→P2）、难度（easy / medium / hard）。**所有发现都要列出来，不要自行过滤掉"不重要"的**；roadmap 级的大改造也列出来，但标注 `roadmap`。
-4. plan name 用 `repo-improvements`（已存在就加日期或后缀）。plan.md 的"拆解"一节就是这份完整发现清单；后续第 3 节按清单拆 todo 队列。
-5. 标了 `roadmap` 的发现只进 plan 不进队列；其余全部按第 3 节规则拆成任务。
-
-探索模式结束后直接接第 2 节（写 plan）继续，第 2 节的"意图"一节改写为探索结论摘要。
-
-## 2. 写 plan
-
-plan name 用短横线小写 slug（如 `add-user-auth`）。检查 `plans/` 下是否已有同名目录：已存在且内容相关就在其基础上更新，否则换一个新名字。
-
-写 `plans/<plan-name>/plan.md`，至少包含：
-
-- **意图**：一段话复述用户需求与分析结论；
-- **目标 / 非目标**；
-- **方案**：整体思路、关键设计决策、涉及模块；
-- **拆解**：任务清单概览，与 `todos/` 文件一一对应，标注依赖关系；
-- **校验**：仓库级校验命令与验收方式；
-- **风险与假设**。
-
-## 3. 拆任务队列
+## 2. 拆任务队列
 
 用 skill 工具加载 `plan-to-todo`，按它把 `plans/<plan-name>/plan.md` 拆解成 `plans/<plan-name>/todos/` 队列。探索模式中标了 `roadmap` 的发现只进 plan，不进队列。
 
-## 4. 自动开始执行
+## 3. 自动开始执行
 
 写完计划和队列后自动拉起执行，不要只留一条命令让用户手动跑。**进入执行阶段前必须先 git commit**：执行端要求干净工作区，计划文件不提交就不允许开始执行。
 
@@ -92,6 +51,4 @@ plan name 用短横线小写 slug（如 `add-user-auth`）。检查 `plans/` 下
 ## 硬性规则
 
 - 只产出 `plans/<plan-name>/` 下的文件；不修改业务代码。进入执行阶段前必须先提交计划文件（这是唯一允许的自动 commit）；用户的其他改动一律不得代为提交。
-- plan 必须基于对仓库的实际搜索与分析，不允许凭空设计方案。
-- 拆 todo 队列必须加载 `plan-to-todo` skill 并按它执行，不自行发挥格式。
-- 关键歧义先问用户；次要假设必须写进 plan。
+- 写 plan 必须加载 `make-plan`、拆队列必须加载 `plan-to-todo`，按各自 skill 执行，不自行发挥。
