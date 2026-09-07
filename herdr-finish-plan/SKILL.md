@@ -97,7 +97,7 @@ herdr agent start <agent-name> --kind opencode --pane <pane-id> -- --auto --mode
 结束时报告：commit、修改文件、逐条验收证据、校验命令与结果、剩余风险或 blocker，并保持 worktree 干净。
 ```
 
-同时处于 starting、working、done-but-not-integrated、reviewing 或 rebasing 状态的任务总数不得超过 5。资源不足或可运行任务不足时可以少于 5，不得为了凑数启动有依赖或明显冲突的任务。
+同时处于 starting、working、recovering、done-but-not-integrated、reviewing 或 rebasing 状态的任务总数不得超过 5。资源不足或可运行任务不足时可以少于 5，不得为了凑数启动有依赖或明显冲突的任务。
 
 ## 4. 监控并复核完成结果
 
@@ -120,11 +120,14 @@ kill $(jobs -p) 2>/dev/null; rm -f "$wake"
 
 `head -1` 返回表示最早有 agent 状态变化或 15 分钟检查点已到，不是失败、停滞或需要中断的证据。唤醒后用一次 `herdr agent list` 批量刷新，对全部进入可操作状态的 agent **按完成先后（先完成的先进入复核与集成）**逐个处理，不等待队列顺序更靠前的任务；随后只对仍在工作的 agent 挂下一轮并行等待。本机 shell（bash 3.2 / zsh 5.9）不支持 `wait -n`，统一用上述 FIFO 写法。不要用 15 秒或其他短超时循环高频轮询。
 
-Codex / OpenCode 在复杂任务上可能长时间保持 Thinking。不得仅因 Thinking 持续时间长、一个或多个 15 分钟周期内状态未变、画面相同或 worktree 暂无改动，就发送 `esc`/`ctrl+c`、重启 agent 或改写任务。只有出现明确的错误、进程退出、需要交互的 `blocked` 状态，或用户明确要求停止时，才停止正常等待；若怀疑真正死循环，先收集 `get/read` 和 worktree 证据并向用户报告，不要擅自中断。
+Codex / OpenCode 在复杂任务上可能长时间保持 Thinking。不得仅因 Thinking 持续时间长、一个或多个 15 分钟周期内状态未变、画面相同或 worktree 暂无改动，就发送 `esc`/`ctrl+c`、重启 agent 或改写任务。只有出现明确的错误、意外暂停、进程退出、需要交互的 `blocked` 状态，或用户明确要求停止时，才停止正常等待；若怀疑真正死循环，先收集 `get/read` 和 worktree 证据并向用户报告，不要擅自中断。
 
-单个任务从启动开始累计超过 **2 小时**仍未完成或无可操作状态，视为异常：发送 `esc` 停止该 agent，按未完成任务记录 blocker，不再补位；同时停止整个 Workflow——中断剩余工作中的 agent（`ctrl+c`）、放弃后续排队任务，向用户报告各任务状态、已完成项与残留资源，等待用户决定是否继续。
+监控、复核或集成期间，检查到明确错误，或确认任务未完成却意外暂停、退出、回到等待输入时，协调器应主动诊断并帮助恢复。**每个 todo 在本轮 Workflow 中累计最多尝试恢复 3 次**，从启动时以 0 计数；每次实际恢复尝试前先递增并记录原因与操作，状态检查不计次数，恢复成功、重启或更换 agent 名称都不重置计数。
 
-若 agent 为 `blocked`，先读取界面和原因，按已有任务范围与授权处理；仍缺少范围或产品决策信息时再向用户澄清，不盲目发送按键。
+1. 先用 `get/read` 读取状态、界面与错误信息，并检查 worktree，区分已完成、正常 Thinking 和可恢复异常。用户主动暂停或停止时不自动恢复；若 `blocked` 仍缺少范围、产品决策或必要授权，记录原因并向用户澄清，不盲目发送按键。
+2. 对已有任务范围与授权内的异常，按原因选择一次恢复操作：发送明确的继续指令、恢复会话，或在必要时重启 agent。保留原任务分支、worktree 和已有改动，沿用原 agent 类型、模型、推理强度及启动模式；重启前确认旧进程已退出，避免两个 agent 同时写同一 worktree。
+3. 每次尝试后重新读取状态与输出，确认任务已继续执行或已完成，再回到正常监控或复核；仍有明确异常且未满 3 次时才进行下一次尝试。恢复后的长时间 Thinking 仍按 15 分钟节奏等待，不作为再次恢复的依据。
+4. 异常仍需恢复但 3 次额度已用尽时，停止该任务的自动恢复，记录 blocker、尝试次数、每次操作与结果，并向用户报告；保留其 workspace、worktree 和分支，等待用户决定后续处理，继续推进其他无依赖的任务。
 
 agent 自报完成后，协调器必须在其 worktree 中独立检查：
 
@@ -208,7 +211,7 @@ git branch -d <task-branch>
 - 默认一个 todo 文件对应一个 worktree 和一个最终 commit。
 - agent 必须通过 Herdr 启动，始终显式使用 auto / YOLO 模式：OpenCode 用 `--auto`，Codex 用 `--dangerously-bypass-approvals-and-sandbox`，重启或补位同样适用。按共享分发规则先选类型，再按难度和用户覆盖选模型与推理强度。默认跟随发起宿主，保留队列保存值，单任务指定优先，不静默换 agent、换模型或降档。
 - agent 处于 `working`/Thinking 时，为所有在跑 agent 并行挂后台等待，任一 settle 即唤醒并按完成先后处理；每轮等待最长 15 分钟，短超时或长时间 Thinking 都不是中断依据。
-- 单个任务运行超过 2 小时未完成即停掉该 agent 并停止整个 Workflow，报 blocker 后等待用户决定。
+- 检查到 agent 明确出错或意外暂停时，按第 4 节主动诊断并恢复；每个 todo 本轮累计最多 3 次，额度用尽且仍需恢复时记录 blocker、保留已有工作并报告。
 - 任务 agent 只写自己的任务分支；协调器独占原分支和最终合并。
 - 每个任务必须先 rebase 原分支并解决冲突，再通过仓库级校验和 `git merge --ff-only`。
 - 合并成功并清理本轮 worktree 后，任务才算完成。
