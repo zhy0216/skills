@@ -12,20 +12,39 @@
     "agent": "opencode",
     "model": null,
     "reasoningEffort": null,
-    "extraArgs": ["--agent", "build"]
+    "extraArgs": [
+      "--agent",
+      "build"
+    ]
   },
   "agents": {
     "orchestrator": {
-      "extraArgs": ["--agent", "build", "--title", "Linear orchestrator"]
+      "extraArgs": [
+        "--agent",
+        "build",
+        "--title",
+        "Linear orchestrator"
+      ]
     },
     "planner": {
-      "extraArgs": ["--agent", "build", "--title", "Linear planner"]
+      "extraArgs": [
+        "--agent",
+        "build",
+        "--title",
+        "Linear planner"
+      ]
     },
     "executor": {
-      "extraArgs": ["--agent", "build", "--title", "Linear executor"]
+      "extraArgs": [
+        "--agent",
+        "build",
+        "--title",
+        "Linear executor"
+      ]
     }
   },
   "timeoutMinutes": 720,
   "linearBin": "linear-cli",
+  "herdrBin": "herdr",
   "opencodeBin": "opencode"
 }

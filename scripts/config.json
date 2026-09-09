@@ -21,6 +21,7 @@
   },
   "timeoutMinutes": 720,
   "linearBin": "linear-cli",
+  "herdrBin": "herdr",
   "codexBin": "codex",
   "opencodeBin": "opencode"
 }

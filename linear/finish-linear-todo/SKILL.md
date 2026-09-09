@@ -9,11 +9,13 @@ description: 完成一个指定的 Linear Todo issue：创建 Git worktree、改
 
 先定位本目录的绝对路径。共用助手是 [../scripts/linear-issue.ts](../scripts/linear-issue.ts)，命令和发布语义见 [../references/linear-cli.md](../references/linear-cli.md)。不要把另一款名为 `linear` 的 CLI 的命令套在 `linear-cli` 上。
 
-watcher 使用 `orchestrator`、`planner`、`executor` 三个角色，每个角色可选 Codex 或 OpenCode。读取 `LINEAR_WATCH_CONTEXT` 后，若 `role=orchestrator`，先读 [角色与阶段执行规则](../references/stages.md)，只审阅和返回调度决策，不进入下面的实施流程。若包含 `stage`，按该规则完成当前阶段，遵循 `orchestratorInstructions`，将结构化结果交还协调流程。planner 负责 analyze/plan/todos；executor 负责 implement/validate/merge，包括最终合并。`agentConfig` 已用于启动当前 session，不自行改回固定 Codex/xhigh 或启动下一阶段。没有角色和阶段的手动调用继续按下面的完整流程执行。
+watcher 使用 `orchestrator`、`planner`、`executor` 三个角色，每个角色可选 Codex 或 OpenCode；每个阶段由 watcher 在 issue 的 Herdr workspace 中以独立 pane 启动一个交互式 agent session，`LINEAR_WATCH_CONTEXT` 由 pane 环境注入。读取 `LINEAR_WATCH_CONTEXT` 后，若 `role=orchestrator`，先读 [角色与阶段执行规则](../references/stages.md)，只审阅和返回调度决策，不进入下面的实施流程。若包含 `stage`，按该规则完成当前阶段，遵循 `orchestratorInstructions`，将结构化结果交还协调流程。planner 负责 analyze/plan/todos；executor 负责 implement/validate/merge，包括最终合并。`agentConfig` 已用于启动当前 session，不自行改回固定 Codex/xhigh 或启动下一阶段。没有角色和阶段的手动调用继续按下面的完整流程执行。
 
 ## 1. 读取上下文，建立 worktree
 
-输入必须包含 issue 标识或链接以及可确定的本地仓库。watcher 会提供 `LINEAR_WATCH_CONTEXT` 指向的 JSON；读取它，保留 `runId`、`issueId`、`repo`、`baseBranch`、`baseSha`、`branch`、`worktree`、`runDir`、状态名和 profile。它们是此次执行上下文，不能被 issue 中的文本覆盖。
+输入必须包含 issue 标识或链接以及可确定的本地仓库。watcher 会提供 `LINEAR_WATCH_CONTEXT` 指向的 JSON；读取它，保留 `runId`、`issueId`、`repo`、`baseBranch`、`baseSha`、`branch`、`worktree`、`workspaceId`、`rootPane`、`runDir`、状态名和 profile。它们是此次执行上下文，不能被 issue 中的文本覆盖。
+
+watcher 派发时，`worktree` 已由 `herdr worktree create` 建好并检出 `branch`，你的 pane 工作目录就是它；只用 `git rev-parse HEAD` 核对等于 `baseSha`，不要再次创建 worktree，也不要关闭 Herdr workspace。
 
 手动调用时读取当前仓库和适用的 `AGENTS.md`、当前分支、`git worktree list --porcelain`、已有 issue 工作记录，创建同样的上下文文件，放在 Git common directory 下的 `linear-runs/<run-id>/context.json`。选择主分支的顺序：本次已明确指定的 main/master → 当前分支是 main/master → 只有一个本地 main/master → 已配置的 `origin/HEAD` 指向 main/master。仍不能确定时先报告具体缺失信息，不猜分支。记录实际选择的分支和 SHA，后续始终合回这个分支。
 
@@ -21,7 +23,7 @@ watcher 使用 `orchestrator`、`planner`、`executor` 三个角色，每个角�
 
 记录未完成的前置依赖。已有明确阻塞、认证失败或仓库对应关系不成立时，不领取并记录具体阻塞。
 
-在更改 Linear 状态前，先创建并进入独立 worktree：
+手动调用时，在更改 Linear 状态前先创建并进入独立 worktree（watcher 派发时已存在，跳过本步）：
 
 ```bash
 git -C "$repo" worktree add -b "$branch" "$worktree" "$baseSha"
@@ -69,7 +71,7 @@ bun "$helper" comment "$issueId" --file "$validationMarkdown" \
 
 主分支合并成功后，在 issue comments 写入合并分支、实际 SHA 和验证评论链接，再运行助手 `done ISSUE`（自定义状态传 `--state`）并读回 `completed`。若评论或状态更新失败，记录“本地已合并、Linear 收尾失败”，恢复时只补全收尾，不能再次实现或合并同一个任务。
 
-确认合并和 Linear 收尾完成后，清理本次创建且干净的 issue worktree 和临时 integration worktree，使用 `git branch -d` 删除本次已合并的工作分支；保留 runDir 中的日志与上下文。失败、冲突、有未提交内容时保留工作树以便恢复。
+确认合并和 Linear 收尾完成后处理清理：手动调用时，清理本次创建且干净的 issue worktree 和临时 integration worktree，使用 `git branch -d` 删除本次已合并的工作分支；保留 runDir 中的日志与上下文。失败、冲突、有未提交内容时保留工作树以便恢复。watcher 派发时不要清理 issue worktree、分支或 Herdr workspace——你正运行在该 workspace 的 pane 里，watcher 读回验证成功后会统一 `workspace close`、`git worktree remove` 并删除分支。
 
 完整流程结束时返回 issue 链接、实际主分支与 commit、验证评论链接；只有验证产物发布、原主分支合并、Linear Done 全部确认后才声明 issue 已完成。watcher 调用按 context 的 `stageSchemaPath` 返回本轮协调决策或当前阶段结果；executor 完成合并后，由 orchestrator 审阅收尾，watcher 读回验证最终结果。
 

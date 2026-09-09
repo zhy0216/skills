@@ -22,7 +22,7 @@ scripts/config.codex.example.json
 scripts/config.opencode.example.json
 ```
 
-运行需要 Bun（本机验证版本 1.4.2，必须提供原生 `Bun.cron`）、已认证的 `linear-cli`、Git，以及配置中实际使用的 Codex CLI 或 OpenCode CLI。本机核对的 CLI 版本为 Codex 0.153.4、OpenCode 1.18.29；运行时没有 npm 依赖。参阅 [Bun cron 文档](https://bun.com/docs/runtime/cron) 和 [Codex skills 文档](https://learn.chatgpt.com/docs/build-skills)。
+运行需要 Bun（本机验证版本 1.4.2，必须提供原生 `Bun.cron`）、已认证的 `linear-cli`、Git、一个正在运行的 Herdr session，以及配置中实际使用的 Codex CLI 或 OpenCode CLI（由 Herdr pane 的 shell 在 PATH 中解析；配置里写 `codexBin`/`opencodeBin` 时其目录会被注入 pane PATH）。本机核对的 CLI 版本为 Codex 0.153.4、OpenCode 1.18.29、Herdr 以 `herdr --version` 为准；运行时没有 npm 依赖。参阅 [Bun cron 文档](https://bun.com/docs/runtime/cron) 和 [Codex skills 文档](https://learn.chatgpt.com/docs/build-skills)。
 
 ## 配置并运行
 
@@ -42,7 +42,7 @@ scripts/config.opencode.example.json
 
 每条 route 至少提供 `team` 或 `project`；两者同时提供时都必须匹配，支持 Team key/name/UUID 和 Project name/UUID。不要设置重叠路由；同一个 issue 匹配多条会报告歧义并跳过。`todoState` 默认 `Todo`，可设置实际名称或 ID。`inProgressState`、`doneState` 可指定本 Team 的状态。`baseBranch` 可选 `main`/`master`；从 feature 分支启动且无法确定原主分支时应显式设置。
 
-可选顶层配置：`linearProfile`、`linearBin`、`codexBin`、`opencodeBin`、`stateDir`、`defaults`、`agents`。`timeoutMinutes` 默认 720，是一条 issue 所有阶段共用的执行时限；允许任务跨过下一个四小时刻度，期间用锁防止重入。旧顶层 `model` 仍兼容，新配置请使用 `defaults.model`。
+可选顶层配置：`linearProfile`、`linearBin`、`codexBin`、`opencodeBin`、`herdrBin`、`herdrSocket`、`stateDir`、`defaults`、`agents`。任务全部通过 Herdr 执行：每条 issue 用 `herdr worktree create` 建立独立 worktree 与 workspace，orchestrator/planner/executor 的每个阶段都在该 workspace 的专用 pane 里以交互式 agent 启动（Codex 带 YOLO 参数、OpenCode 带 `--auto`），一次一个，结束即关闭 pane；成功后 watcher `workspace close` 并删除 worktree 和分支，失败时保留现场。`herdrSocket` 选择目标 session 的 socket（默认取 `HERDR_SOCKET_PATH`，否则 `~/.config/herdr/herdr.sock`，即 default session；命名 session 用其 `sessions/<name>/herdr.sock`）。`timeoutMinutes` 默认 720，是一条 issue 所有阶段共用的执行时限；允许任务跨过下一个四小时刻度，期间用锁防止重入。旧顶层 `model` 仍兼容，新配置请使用 `defaults.model`。
 
 ### 三个角色的 agent 配置
 
@@ -86,7 +86,7 @@ scripts/config.opencode.example.json
 
 每个角色按字段覆盖 defaults。同一种 CLI 继承未指定字段；切换 CLI 类型时，模型、思考深度和额外参数重新采用目标 CLI 的内置默认值，避免把 Codex 模型或参数传给 OpenCode。Codex 的内置默认值是 `model: null`、`reasoningEffort: "xhigh"`、`extraArgs: []`；OpenCode 是 `model: null`、`reasoningEffort: null`、`extraArgs: []`。切换时需要的设置请直接写在该角色内。
 
-`extraArgs` 整组替换继承值，`[]` 清空；其中的空格、引号、`$()` 都按字面量传入，不作为 shell 命令执行。模型、工作目录、结果输出及 session 复用参数由 runner 管理，不能通过 extraArgs 覆盖；CLI 子命令 exec/run 也由 runner 添加。Codex 始终加 YOLO 参数 `--dangerously-bypass-approvals-and-sandbox`，OpenCode 加 `--auto`。
+`extraArgs` 整组替换继承值，`[]` 清空；其中的空格、引号、`$()` 都按字面量传入，不作为 shell 命令执行。工作目录（issue worktree）、pane 环境（含 `LINEAR_WATCH_CONTEXT`）、agent 名称和结果文件由 runner 管理，不能通过 extraArgs 覆盖；启动不使用 exec/run 子命令，直接拉起交互式 TUI。Codex 始终加 YOLO 参数 `--dangerously-bypass-approvals-and-sandbox`，OpenCode 加 `--auto`。TUI 没有 schema 约束输出：各阶段以“把符合 schema 的 JSON 写入结果文件”为交接契约，文件缺失时 runner 会补发一次仅写文件的提醒。
 
 同一角色负责的所有步骤都使用同一份配置；merge 使用 executor。旧的 `stages` agent 配置会给出迁移提示，请改成上述三个角色，避免旧覆盖与新归属发生冲突。具体职责和交接见 [角色与阶段执行规则](references/stages.md)。
 
@@ -122,18 +122,18 @@ bun scripts/linear-watch.ts --config /absolute/path/config.json --uninstall
 
 ## 执行与恢复
 
-每轮先完成所有分页，再按 priority、创建时间顺序派发，issue 之间顺序执行；失败不会阻止本轮其他 issue。简单任务执行 `analyze → implement → validate → merge`，复杂任务在 analyze 后增加 `plan → todos`。每次交接先运行一轮 orchestrator，它读取证据、选择下一阶段并给出指令；脚本使用所属角色的配置启动独立 session。各阶段通过同一个 worktree、Linear 产物和结构化上下文交接。最终验证产物发布到 comments 后，快进合入最初记录的本地 main/master，再标记 Done。只要求本地合并时不会自动 push。
+每轮先完成所有分页，再按 priority、创建时间顺序派发，issue 之间顺序执行；失败不会阻止本轮其他 issue。领取 issue 后 watcher 先用 `herdr worktree create` 建立独立 worktree 和 workspace。简单任务执行 `analyze → implement → validate → merge`，复杂任务在 analyze 后增加 `plan → todos`。每次交接先运行一轮 orchestrator，它读取证据、选择下一阶段并给出指令；脚本使用所属角色的配置在该 workspace 的新 pane 中启动交互式 agent。各阶段通过同一个 worktree、Linear 产物和结构化上下文交接。最终验证产物发布到 comments 后，快进合入最初记录的本地 main/master，再标记 Done；成功读回后 watcher 关闭 workspace 并清理 worktree 和分支，失败则保留现场。只要求本地合并时不会自动 push。
 
 orchestrator 可以要求重新规划或返工；相关后续结果会失效，需要重新验证。主分支在验证后或合并前前进时，协调流程再次派发 executor/validate 和 executor/merge。主分支变化累计三次导致验证失效时停止；一条 issue 最多运行 24 轮协调决策，超时或无进展时保留工作树和日志。
 
-默认日志位于 `$XDG_STATE_HOME/linear-watch` 或 `~/.local/state/linear-watch`。`watcher.jsonl` 是调度日志；每条 issue 的 `runs/<issue>-<run-id>/context.json` 保存 worktree、已解析的角色配置、阶段结果、执行历史和协调决策。每阶段的 `stages/<stage>-<attempt>/` 包含独立 `context.json`、`result.json`、`codex.jsonl` 或 `opencode.jsonl`、对应 stderr 日志。`orchestrator/<turn>/` 保存每轮协调者的 context、决策 JSON 和 CLI 日志。根目录的 `result.json` 是最终汇总，`verified.json` 是完成后的读回确认，`failure.json` 保存失败原因。
+默认日志位于 `$XDG_STATE_HOME/linear-watch` 或 `~/.local/state/linear-watch`。`watcher.jsonl` 是调度日志；每条 issue 的 `runs/<issue>-<run-id>/context.json` 保存 worktree、Herdr workspace/pane、已解析的角色配置、阶段结果、执行历史和协调决策。每阶段的 `stages/<stage>-<attempt>/` 包含独立 `context.json`、`result.json` 和 `<agent 名>.tui.log`（agent 结束后抓取的 pane 转录）；`orchestrator/<turn>/` 同理保存每轮协调者的 context、决策 JSON 和转录。根目录的 `result.json` 是最终汇总，`verified.json` 是完成后的读回确认，`failure.json` 保存失败原因。
 
 退出码 0 不会自动算完成：watcher 在交接时读回 worktree、Document、checklist 和验证评论，最终再核对主分支包含返回的 commit、Linear 已 completed，且验证评论属于该 issue 并包含该 commit。
 
-仓库锁位于 Git common directory 的 `linear-watch.lock/`，issue 锁位于默认 state root 的 `locks/`（不随自定义日志目录变化）。SIGINT/SIGTERM 和超时会终止子进程组并保留日志及工作树。硬崩溃留下的锁不会自动抢占；先读 `owner.json` 的父/子 PID，确认进程与 worktree 状态，再只移除对应失效锁目录。不要把仍运行的任务锁当作 stale lock。
+仓库锁位于 Git common directory 的 `linear-watch.lock/`，issue 锁位于默认 state root 的 `locks/`（不随自定义日志目录变化）。锁 owner 记录当前 Herdr agent 名、paneId 和 workspaceId。SIGINT/SIGTERM 和超时会让 watcher 关闭正在运行的 worker pane（Herdr 随之回收 agent 进程），并保留日志、worktree 和 workspace。watcher 硬崩溃时其后的 agent 可能仍在 Herdr session 中运行；先 `herdr agent list` 和读 `owner.json` 核对，确认相关 pane 已消失后，再只移除对应失效锁目录。不要把仍运行的任务锁当作 stale lock。
 
 已进入 In Progress 的失败任务不会被下一轮 Todo 扫描重复领取。手动执行 `$finish-linear-todo ISSUE` 并提供原 `context.json`，明确恢复该运行；已合并但 Linear 收尾失败时只补评论/状态。尚未领取的 Todo 在下一轮仍可处理。同一范围只在一台机器上运行 watcher；本机锁不提供跨机器原子领取。
 
 ## 验证开发改动
 
-在 `linear/` 目录运行 `bun install` 后，执行 `bun run check` 和 `bun test`。测试使用模拟 Linear/Codex/OpenCode CLI 和临时 Git 仓库，覆盖参数继承、三个角色的实际派发、协调返工/重新规划、单条试跑、验证重试和真实 Git 合并，不改真实 Linear issues。
+在 `linear/` 目录运行 `bun install` 后，执行 `bun run check` 和 `bun test`。测试使用模拟 Linear/Codex/OpenCode/Herdr CLI 和临时 Git 仓库，覆盖参数继承、三个角色经 Herdr pane 的实际派发、结果文件缺失时的一次提醒、协调返工/重新规划、单条试跑、验证重试和真实 Git 合并与 worktree 清理，不改真实 Linear issues，也不接触真实 Herdr session。

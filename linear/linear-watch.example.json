@@ -18,5 +18,6 @@
     "planner": { "agent": "opencode", "model": null, "reasoningEffort": "high", "extraArgs": ["--agent", "build"] },
     "executor": {}
   },
-  "timeoutMinutes": 720
+  "timeoutMinutes": 720,
+  "herdrBin": "herdr"
 }

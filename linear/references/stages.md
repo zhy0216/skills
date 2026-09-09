@@ -44,20 +44,20 @@ context 同时包含 `role` 与 `stage` 时，只完成当前阶段。读取 `or
 
 | stage | 角色 | 当前阶段的交付 |
 | --- | --- | --- |
-| `analyze` | planner | 读取需求、依赖和仓库；先创建并进入指定 worktree，再改 In Progress；返回 simple/complex 判断和依据。保留起始 commit，不实现业务改动。 |
+| `analyze` | planner | worktree 已由 watcher 通过 Herdr 创建并检出 issue 分支；核对起点 commit、读取需求、依赖和仓库约束，再改 In Progress；返回 simple/complex 判断和依据。保留起始 commit，不实现业务改动。 |
 | `plan` | planner | 发布通过 issueId 原生关联的非空 Linear Document，返回 ID/URL；补充方案时更新同一 Document。 |
 | `todos` | planner | 将有编号、依赖、验收条件的 checklist 写入最新 description 的管理小节，保留用户内容和 plan 链接。 |
 | `implement` | executor | 在同一个 issue worktree 内实现并提交，做必要开发验证；复杂任务同步 description 的进度。返回 HEAD commit，保持工作树干净。返工时修正已有实现。 |
 | `validate` | executor | 集成原 main/master 的最新提交，运行最终验证，必要时修复并提交；将真实产物发到 issue comments。返回 commit、validatedBaseSha 和 validationCommentId。保留工作树和 In Progress。 |
-| `merge` | executor | 只合入上一阶段已验证的 commit，写合并评论并改 Done；成功后清理本次工作树和分支，交回 orchestrator 核对收尾。 |
+| `merge` | executor | 只合入上一阶段已验证的 commit，写合并评论并改 Done；不清理工作树、分支或 Herdr workspace（watcher 读回验证后收尾），交回 orchestrator 核对收尾。 |
 
-简单任务通常按 `analyze → implement → validate → merge` 执行；复杂任务增加 `plan → todos`。各阶段均由所属角色配置启动独立 session，通过同一个 worktree 和结构化记录交接。
+简单任务通常按 `analyze → implement → validate → merge` 执行；复杂任务增加 `plan → todos`。每个 issue 由 watcher 用 `herdr worktree create` 建立独立 worktree 和 Herdr workspace；orchestrator 与所有 stage 都由所属角色的配置在该 workspace 的独立 pane 中启动为交互式 agent session（一次一个，结束即关闭 pane），通过同一个 worktree 和结构化记录交接。
 
-原始 `repo/baseBranch/baseSha/branch/worktree/runDir` 固定；`previousResults` 只包含当前有效的前序结果。前序分析结论在 summary，详细证据可放在 runDir 并给出路径；后续阶段还需读取真实 Linear Document、description、comments 和代码。
+原始 `repo/baseBranch/baseSha/branch/worktree/runDir` 固定；`previousResults` 只包含当前有效的前序结果。前序分析结论在 summary，详细证据可放在 runDir 并给出路径；后续阶段还需读取真实 Linear Document、description、comments 和代码。你的 pane 工作目录就是 `worktree`；仓库和运行产物按上下文中的绝对路径访问。
 
 不重新创建已经存在的 issue worktree，不重新领取本次已 started 的 issue，不自行执行下一阶段。协调者要求补充 plan/todos 或返工时，复用当前工作树及原 Document，整合新的指令和用户补充。重大缺失信息仍不能编造。
 
-将结果 JSON 写入 context 的 `stageResultPath`，并作为最终回答。Codex 由 CLI 使用 `stageSchemaPath` 约束最终输出；OpenCode 同样必须按该 schema 写文件，若仅返回最终 JSON，runner 会从 JSON text 事件中提取。未使用的产物字段填写 null：
+交互式 TUI 没有 schema 约束输出：两个 CLI 都必须把结果 JSON 写入 context 的 `stageResultPath`，并把同一 JSON 作为最终回答。watcher 只读结果文件；agent 结束后文件缺失时会补发一次“只写结果文件”的提醒，再缺失即阶段失败。未使用的产物字段填写 null：
 
 ```json
 {

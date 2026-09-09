@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { agentArgs, resolveRoleAgents, type AgentSettings } from "../scripts/agents";
-import { parseOrchestratorResult, parseStageResult } from "../scripts/stages";
+import { agentName, parseOrchestratorResult, parseStageResult } from "../scripts/stages";
 
-const argsFor = (settings: AgentSettings) => agentArgs(resolveRoleAgents(settings).executor, "/repo", "/run/result.json", "/schema.json");
+const argsFor = (settings: AgentSettings) => agentArgs(resolveRoleAgents(settings).executor);
 
 describe("agent configuration", () => {
   test("inherits defaults by role and field and keeps legacy model config working", () => {
@@ -50,8 +50,12 @@ describe("agent configuration", () => {
       defaults: { agent: "opencode", model: "provider/model", reasoningEffort: "high", extraArgs: ["--title", "inherited"] },
       agents: { executor: { extraArgs: ["--agent", "build"] } },
     });
-    expect(opencode.slice(1)).toEqual(["run", "--auto", "--agent", "build", "--model", "provider/model", "--variant", "high", "--dir", "/repo", "--format", "json"]);
+    expect(opencode).toEqual(["--auto", "--agent", "build", "--model", "provider/model", "--variant", "high"]);
     expect(opencode).not.toContain("inherited");
+    const codexPane = argsFor({ defaults: { model: "gpt-test", reasoningEffort: "high", extraArgs: ["--ephemeral"] } });
+    expect(codexPane).toEqual(["--dangerously-bypass-approvals-and-sandbox", "--ephemeral", "--model", "gpt-test", "-c", 'model_reasoning_effort="high"']);
+    expect(agentName("ENG-1", "a1")).toBe("lin-eng-1-a1");
+    expect(agentName("Team/Sub-42", "me2")).toMatch(/^[a-z][a-z0-9_-]{0,31}$/);
   });
 
   test("rejects invalid or conflicting settings before launching a stage", () => {
@@ -60,7 +64,7 @@ describe("agent configuration", () => {
       { agents: { planning: {} } }, { agents: { planner: null } }, { defaults: { extraArgs: "--verbose" } },
       { defaults: { extraArgs: ["--profile", 5] } }, { defaults: { extraArgs: ["bad\0arg"] } },
       { defaults: { extraArgs: ["--cd=/tmp"] } }, { defaults: { extraArgs: ["-mother-model"] } },
-      { defaults: { agent: "opencode", extraArgs: ["--format", "text"] } },
+      { defaults: { agent: "opencode", extraArgs: ["--dir", "/tmp"] } },
       { defaults: { agent: "opencode", extraArgs: ["--variant=high"] } },
       { defaults: { extraArgs: ["--"] } }, { defaults: { reasoning: "high" } },
       { stages: { merge: { agent: "opencode" } } }, { agents: { merge: {} } },

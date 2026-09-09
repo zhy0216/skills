@@ -12,7 +12,9 @@
     "agent": "codex",
     "model": null,
     "reasoningEffort": "xhigh",
-    "extraArgs": ["--ephemeral"]
+    "extraArgs": [
+      "--ephemeral"
+    ]
   },
   "agents": {
     "orchestrator": {
@@ -27,5 +29,6 @@
   },
   "timeoutMinutes": 720,
   "linearBin": "linear-cli",
+  "herdrBin": "herdr",
   "codexBin": "codex"
 }

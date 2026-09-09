@@ -1,16 +1,17 @@
 #!/usr/bin/env bun
 import { mkdirSync, readFileSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { command, digest, LinearClient, type Issue } from "../linear/scripts/linear-client";
-import { AgentCleanupError, resolveRoleAgents, STAGE_ROLES, type AgentSettings, type RoleAgents } from "../linear/scripts/agents";
+import { AgentCleanupError, closeHerdrWorkspace, createHerdrWorktree, herdrPing, makeHerdr, resolveRoleAgents, STAGE_ROLES, type Herdr, type AgentSettings, type RoleAgents } from "../linear/scripts/agents";
 import { runStages, type RunContext } from "../linear/scripts/stages";
 
 export const SCHEDULE = "0 */4 * * *";
 const SUITE = resolve(import.meta.dir, "../linear");
 const STATE_ROOT = join(process.env.XDG_STATE_HOME || join(homedir(), ".local/state"), "linear-watch");
 export const DEFAULT_CONFIG = join(import.meta.dir, "config.json");
+export const DEFAULT_HERDR_SOCKET = join(homedir(), ".config/herdr/herdr.sock");
 
 export type Route = {
   repo: string;
@@ -25,16 +26,20 @@ export type Config = AgentSettings & {
   routes: Route[];
   linearProfile?: string;
   linearBin?: string;
+  herdrSocket?: string;
   stateDir?: string;
   timeoutMinutes?: number;
 };
-type Runtime = Config & { linearBin: string; codexBin: string; opencodeBin: string; stateDir: string; timeoutMinutes: number; roleAgents: RoleAgents };
+type Runtime = Config & {
+  linearBin: string; codexBin: string; opencodeBin: string; stateDir: string; timeoutMinutes: number;
+  herdrSocket: string; herdr: Herdr; roleAgents: RoleAgents;
+};
 type Result = { issueId: string; outcome: "completed" | "blocked" | "failed"; baseBranch: string; commit: string | null; validationCommentId: string | null; summary: string };
 
 export async function loadConfig(path: string, overrides: Pick<Config, "linearBin" | "codexBin" | "opencodeBin"> = {}): Promise<Runtime> {
   const config: Config = { ...await Bun.file(path).json(), ...overrides };
   if (!Array.isArray(config.routes) || !config.routes.length) throw new Error("Config must contain at least one repository route");
-  const stringKeys = ["model", "linearProfile", "linearBin", "codexBin", "opencodeBin", "stateDir"] as const;
+  const stringKeys = ["model", "linearProfile", "linearBin", "codexBin", "opencodeBin", "herdrBin", "herdrSocket", "stateDir"] as const;
   for (const key of stringKeys) if (config[key] !== undefined && (typeof config[key] !== "string" || !config[key]!.trim())) throw new Error(`Invalid config.${key}`);
   const routes = config.routes.map((route) => {
     if (!route || typeof route.repo !== "string" || !route.repo.trim() || (!route.team && !route.project)) throw new Error("Every route needs repo and at least one of team / project");
@@ -52,11 +57,13 @@ export async function loadConfig(path: string, overrides: Pick<Config, "linearBi
     if (!found) throw new Error(`Executable not found: ${name}`);
     return found;
   };
+  const herdrSocket = config.herdrSocket ? resolve(dirname(path), config.herdrSocket) : process.env.HERDR_SOCKET_PATH || DEFAULT_HERDR_SOCKET;
   return {
-    ...config, routes, timeoutMinutes,
+    ...config, routes, timeoutMinutes, herdrSocket,
     linearBin: binary(config.linearBin ?? "linear-cli"),
     codexBin: Bun.which(config.codexBin ?? "codex") ?? config.codexBin ?? "codex",
     opencodeBin: Bun.which(config.opencodeBin ?? "opencode") ?? config.opencodeBin ?? "opencode",
+    herdr: makeHerdr(config.herdrBin, herdrSocket),
     roleAgents: resolveRoleAgents(config),
     stateDir: config.stateDir ? resolve(dirname(path), config.stateDir) : STATE_ROOT,
   };
@@ -147,6 +154,7 @@ export async function runOnce(config: Runtime, options: { dryRun?: boolean; sign
     let issueLock: ReturnType<typeof acquireLock> = null;
     let preserveLocks = false;
     let runDir: string | undefined;
+    let herdrRun: { workspaceId: string; worktree: string; branch: string } | null = null;
     try {
       const repo = await git(route.repo, "rev-parse", "--show-toplevel");
       const commonDir = await git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir");
@@ -162,36 +170,49 @@ export async function runOnce(config: Runtime, options: { dryRun?: boolean; sign
       const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomUUID().slice(0, 8)}`;
       runDir = join(config.stateDir, "runs", `${fresh.identifier}-${runId}`);
       mkdirSync(runDir, { recursive: true });
+      const baseSha = await git(repo, "rev-parse", `refs/heads/${baseBranch}`);
+      // The Herdr workspace owns the issue worktree; each stage agent runs in its own pane there.
+      const created = await createHerdrWorktree(config.herdr, repo, `linear/${fresh.identifier.toLowerCase()}-${runId}`, `refs/heads/${baseBranch}`, fresh.identifier);
+      herdrRun = { workspaceId: created.workspaceId, worktree: created.worktree, branch: `linear/${fresh.identifier.toLowerCase()}-${runId}` };
+      if (await git(created.worktree, "rev-parse", "HEAD") !== baseSha) throw new Error("Herdr worktree was not created at the recorded base commit");
       const context: RunContext = {
         runId, issueId: fresh.id, identifier: fresh.identifier, issueUrl: fresh.url, repo,
-        baseBranch, baseSha: await git(repo, "rev-parse", `refs/heads/${baseBranch}`),
-        branch: `linear/${fresh.identifier.toLowerCase()}-${runId}`,
-        worktree: join(dirname(repo), ".linear-worktrees", basename(repo), `${fresh.identifier}-${runId}`),
-        runDir, inProgressState: route.inProgressState, doneState: route.doneState,
+        baseBranch, baseSha, branch: herdrRun.branch, worktree: created.worktree, runDir,
+        workspaceId: created.workspaceId, rootPane: created.rootPane,
+        inProgressState: route.inProgressState, doneState: route.doneState,
         todoState: route.todoState ?? "Todo", linearProfile: config.linearProfile,
         skill: join(SUITE, "finish-linear-todo/SKILL.md"), helper: join(SUITE, "scripts/linear-issue.ts"),
       };
-      log("start", { issue: fresh.identifier, repo, baseBranch, runDir });
+      await Bun.write(join(runDir, "context.json"), JSON.stringify({ ...context, roleAgents: config.roleAgents, stageRoles: STAGE_ROLES }, null, 2));
+      log("start", { issue: fresh.identifier, repo, baseBranch, runDir, workspaceId: context.workspaceId, worktree: context.worktree });
       // Count the dispatch attempt, so a failed launch also ends a single-issue test run.
       pickedUp = true;
       const result = await runStages(context, config.roleAgents, {
-        client, timeoutMs: config.timeoutMinutes * 60_000, signal: options.signal, log,
+        herdr: config.herdr, client, timeoutMs: config.timeoutMinutes * 60_000, signal: options.signal, log,
         env: { ...process.env, LINEAR_CLI_BIN: config.linearBin,
           ...(config.linearProfile ? { LINEAR_CLI_PROFILE: config.linearProfile } : {}) },
-        onChild: (role, stage, pid) => {
-          issueLock!.update({ childPid: pid, role, stage, runDir });
-          repoLock!.update({ childPid: pid, role, stage, runDir });
+        onAgent: (role, stage, info) => {
+          issueLock!.update({ herdrAgent: info.name, paneId: info.paneId, workspaceId: context.workspaceId, role, stage, runDir });
+          repoLock!.update({ herdrAgent: info.name, paneId: info.paneId, workspaceId: context.workspaceId, role, stage, runDir });
         },
       });
       await Bun.write(join(runDir, "result.json"), JSON.stringify(result, null, 2));
       await verifyCompletion(client, fresh, repo, baseBranch, result);
       await Bun.write(join(runDir, "verified.json"), JSON.stringify({ ...result, verifiedAt: new Date().toISOString() }, null, 2));
+      try {
+        await closeHerdrWorkspace(config.herdr, context.workspaceId);
+        await git(repo, "worktree", "remove", context.worktree);
+        await git(repo, "branch", "-d", context.branch);
+        log("worktree-cleaned", { issue: fresh.identifier, worktree: context.worktree, branch: context.branch });
+      } catch (error: any) {
+        log("cleanup-failed", { issue: fresh.identifier, workspaceId: context.workspaceId, worktree: context.worktree, branch: context.branch, error: error.message });
+      }
       summary.completed++;
       log("completed", { issue: fresh.identifier, commit: result.commit, validationCommentId: result.validationCommentId, runDir });
     } catch (error: any) {
       if (error instanceof AgentCleanupError) preserveLocks = true;
       summary.failed++;
-      log("failed", { issue: issue.identifier, error: error.message, runDir });
+      log("failed", { issue: issue.identifier, error: error.message, runDir, ...(herdrRun ? { preserved: herdrRun } : {}) });
       if (runDir) await Bun.write(join(runDir, "failure.json"), JSON.stringify({ error: error.message, at: new Date().toISOString() }));
     } finally {
       if (!preserveLocks) { repoLock?.release(); issueLock?.release(); }
@@ -226,7 +247,7 @@ export async function main(args = Bun.argv.slice(2)) {
     install: { type: "boolean" }, uninstall: { type: "boolean" }, help: { type: "boolean" },
   } });
   if (values.help) {
-    console.log(`bun scripts/linear-watch.ts [--config CONFIG] [--once | --test | --dry-run | --install | --uninstall]\nDefault: scan now, then Bun.cron('${SCHEDULE}') in the foreground.\n--test processes at most one eligible Todo through the configured stages, then exits even on failure.\n--dry-run reads Linear/Git and shows resolved role configs and stage ownership; --install registers an OS cron job.\nAgent config: defaults and agents.{orchestrator,planner,executor} support agent, model, reasoningEffort, extraArgs.\nPlanner owns analyze/plan/todos; executor owns implement/validate/merge; orchestrator directs the workflow.\nConfig format: linear/linear-watch.example.json. Default config: ${DEFAULT_CONFIG}`);
+    console.log(`bun scripts/linear-watch.ts [--config CONFIG] [--once | --test | --dry-run | --install | --uninstall]\nDefault: scan now, then Bun.cron('${SCHEDULE}') in the foreground.\n--test processes at most one eligible Todo through the configured stages, then exits even on failure.\n--dry-run reads Linear/Git and shows resolved role configs and stage ownership; --install registers an OS cron job.\nAgent config: defaults and agents.{orchestrator,planner,executor} support agent, model, reasoningEffort, extraArgs.\nPlanner owns analyze/plan/todos; executor owns implement/validate/merge; orchestrator directs the workflow.\nAll roles run inside Herdr: each issue gets a worktree workspace via 'herdr worktree create' and each stage an agent in its own pane. herdrBin selects the CLI; herdrSocket selects the session socket (default: HERDR_SOCKET_PATH or ${DEFAULT_HERDR_SOCKET}).\nConfig format: linear/linear-watch.example.json. Default config: ${DEFAULT_CONFIG}`);
     return;
   }
   if ([values.once, values.test, values["dry-run"], values.install, values.uninstall].filter(Boolean).length > 1) throw new Error("Choose only one run mode");
@@ -240,6 +261,7 @@ export async function main(args = Bun.argv.slice(2)) {
   if (values.install) {
     if (typeof Bun.cron !== "function") throw new Error("This Bun version does not support Bun.cron; upgrade Bun");
     for (const route of config.routes) await resolveBaseBranch(route.repo, route.baseBranch);
+    await herdrPing(config.herdr);
     const jobPath = join(config.stateDir, "jobs", `${title}.ts`);
     mkdirSync(dirname(jobPath), { recursive: true });
     // OS cron starts with a minimal environment. Persist executable paths and PATH, never API tokens.

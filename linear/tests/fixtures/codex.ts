@@ -4,8 +4,18 @@ import { appendFileSync } from "node:fs";
 
 const context = await Bun.file(process.env.LINEAR_WATCH_CONTEXT!).json();
 const kind = context.agentConfig.agent;
-const resultPath = kind === "codex" ? Bun.argv[Bun.argv.indexOf("--output-last-message") + 1]! : context.stageResultPath;
+const resultPath = context.stageResultPath;
+const promptCount = Number(process.env.LINEAR_FAKE_PROMPT_COUNT ?? "1");
+const pendingPath = join(context.stageDir, "pending-result.json");
 const prompt = await new Response(Bun.stdin.stream()).text();
+
+if (promptCount > 1) {
+  // Nudge after a settled turn without a result file: behave like a compliant interactive
+  // agent that only writes the requested artifact.
+  if (await Bun.file(pendingPath).exists()) await Bun.write(resultPath, await Bun.file(pendingPath).text());
+  process.exit(0);
+}
+
 const invocation = { args: Bun.argv.slice(2), prompt, context, cwd: process.cwd() };
 await Bun.write(join(context.stageDir, "invocation.json"), JSON.stringify(invocation));
 appendFileSync(join(context.runDir, "invocations.jsonl"), JSON.stringify(invocation) + "\n");
@@ -25,11 +35,11 @@ function run(args: string[]) {
 const git = (repo: string, ...args: string[]) => run(["git", "-C", repo, ...args]);
 const helper = (...args: string[]) => JSON.parse(run([process.execPath, context.helper, ...args]));
 async function emitResult(result: Record<string, any>) {
+  await Bun.write(pendingPath, JSON.stringify(result));
   if (!(kind === "opencode" && initial.opencodeEventsOnly)) await Bun.write(resultPath, JSON.stringify(result));
   if (kind === "opencode") {
     console.log(JSON.stringify({ type: "text", part: { text: "Work finished." } }));
     console.log(JSON.stringify({ type: "text", part: { text: JSON.stringify(result) } }));
-    if (initial.opencodeErrorEvent) console.log(JSON.stringify({ type: "error", error: { message: "simulated stream error" } }));
   }
 }
 if (context.role === "orchestrator") {
@@ -63,7 +73,7 @@ async function advanceBase() {
 }
 switch (context.stage) {
   case "analyze":
-    git(context.repo, "worktree", "add", "-b", context.branch, context.worktree, context.baseSha);
+    if (git(context.worktree, "rev-parse", "HEAD") !== context.baseSha) throw new Error("herdr did not create the issue worktree at the recorded base");
     helper("start", context.issueId);
     result.complexity = initial.complex ? "complex" : "simple";
     break;

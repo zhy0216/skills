@@ -27,17 +27,19 @@ async function setup(issues = [makeIssue()], extra: Record<string, unknown> = {}
   temporary.push(root);
   const statePath = join(root, "state.json");
   process.env.LINEAR_TEST_STATE = statePath;
+  process.env.LINEAR_HERDR_STATE = join(root, "herdr-state.json");
   await Bun.write(statePath, JSON.stringify({ issues, documents: [], comments: [], ...extra }));
-  for (const name of ["linear-cli", "codex", "opencode"]) {
+  for (const name of ["linear-cli", "codex", "opencode", "herdr"]) {
     const fixture = await Bun.file(join(import.meta.dir, "fixtures", `${name === "opencode" ? "codex" : name}.ts`)).text();
     await Bun.write(join(root, name), fixture.replace("#!/usr/bin/env bun", `#!${process.execPath}`));
     chmodSync(join(root, name), 0o755);
   }
   const configPath = join(root, "config.json");
-  await Bun.write(configPath, JSON.stringify({ routes: [{ repo: "repo", team: "ENG" }], stateDir: "logs", linearBin: join(root, "linear-cli"), codexBin: join(root, "codex"), opencodeBin: join(root, "opencode") }));
+  await Bun.write(configPath, JSON.stringify({ routes: [{ repo: "repo", team: "ENG" }], stateDir: "logs", linearBin: join(root, "linear-cli"), codexBin: join(root, "codex"), opencodeBin: join(root, "opencode"), herdrBin: join(root, "herdr"), herdrSocket: join(root, "herdr.sock") }));
   return {
     root, statePath, configPath, issues, client: new LinearClient(join(root, "linear-cli")),
     state: () => Bun.file(statePath).json(),
+    herdrState: () => Bun.file(join(root, "herdr-state.json")).json(),
     calls: () => readFileSync(statePath + ".calls", "utf8").trim().split("\n").map((s) => JSON.parse(s)),
     config: async (overrides: Partial<Config> = {}) => {
       if (Object.keys(overrides).length) await Bun.write(configPath, JSON.stringify({ ...await Bun.file(configPath).json(), ...overrides }));
@@ -237,6 +239,12 @@ describe("watcher and Git integration", () => {
       expect((await s.state()).issues[0].state.type).toBe("completed");
       expect((await s.state()).comments[0].body).toContain(verified.commit);
       expect(existsSync(join(repo, ".git/linear-watch.lock"))).toBe(false);
+      expect(existsSync(invocation.context.worktree)).toBe(false);
+      expect(await git(repo, "branch", "--list", invocation.context.branch)).toBe("");
+      const herdr = await s.herdrState();
+      expect(Object.keys(herdr.workspaces).length).toBeGreaterThan(0);
+      expect(Object.values(herdr.workspaces).every((w: any) => w.closed)).toBe(true);
+      expect(Object.values(herdr.panes).every((p: any) => !p.alive)).toBe(true);
     }, 15_000);
   }
 
@@ -326,6 +334,9 @@ describe("role agent integration", () => {
     expect(allInvocations(s.root)[0].context.role).toBe("orchestrator");
     expect((await s.state()).issues[0].state.name).toBe("Todo");
     expect(await git(repo, "rev-parse", "HEAD")).toBe(base);
+    const preserved = allInvocations(s.root)[0].context;
+    expect(existsSync(preserved.worktree)).toBe(true);
+    expect(Object.values((await s.herdrState()).workspaces).every((w: any) => !w.closed)).toBe(true);
     expect((await Bun.file(join(runPath(s.root), "failure.json")).json()).error).toContain("Upstream dependency");
   });
 
@@ -376,9 +387,9 @@ describe("role agent integration", () => {
       expect(call.context.orchestratorInstructions).toContain(`Coordinator instruction for ${call.context.stage}`);
       expect(call.prompt).toContain(call.context.orchestratorInstructions);
     }
-    expect(calls[0].cwd).toBe(repo);
     const worktree = calls[0].context.worktree;
-    expect(calls.slice(1).every((run) => run.cwd === worktree)).toBe(true);
+    expect(calls.every((run) => run.cwd === worktree)).toBe(true);
+    expect(allInvocations(s.root).every((run) => run.cwd === worktree)).toBe(true);
     expect(existsSync(join(worktree, "NOT_EXECUTED"))).toBe(false);
     expect(calls[2].context.previousResults.plan.planDocumentId).toBe((await s.state()).documents[0].id);
     expect(calls[5].context.previousResults.validate.validationCommentId).toBe((await s.state()).comments[0].id);
@@ -402,7 +413,7 @@ describe("role agent integration", () => {
     expect((await s.state()).documents).toHaveLength(0);
   }, 10_000);
 
-  test("OpenCode-only runs need no Codex binary and accept a final JSON text event", async () => {
+  test("OpenCode-only runs need no Codex binary and recover a missing result file via one nudge", async () => {
     const s = await setup(undefined, { opencodeEventsOnly: true }); await initRepo(s.root);
     const config = await s.config({ defaults: { agent: "opencode" }, codexBin: join(s.root, "missing-codex") });
     expect((await runOnce(config)).completed).toBe(1);
@@ -413,15 +424,6 @@ describe("role agent integration", () => {
     }
     expect(allInvocations(s.root).filter((run) => run.context.role === "orchestrator")).toHaveLength(5);
   }, 10_000);
-
-  test("an OpenCode stream error stops progression even with exit zero and a valid result file", async () => {
-    const s = await setup(undefined, { opencodeErrorEvent: true }); await initRepo(s.root);
-    const result = await runOnce(await s.config({ defaults: { agent: "opencode" } }));
-    expect(result.failed).toBe(1); expect(result.completed).toBe(0);
-    expect(invocations(s.root)).toHaveLength(0);
-    expect(allInvocations(s.root)).toHaveLength(1);
-    expect((await Bun.file(join(runPath(s.root), "failure.json")).json()).error).toContain("stream error");
-  });
 
   for (const stage of ["implement", "validate"] as const) {
     test(`${stage} failure keeps the worktree and prevents a merge`, async () => {

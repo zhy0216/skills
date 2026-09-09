@@ -1,4 +1,5 @@
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { command } from "./linear-client";
 
 export const STAGES = ["analyze", "plan", "todos", "implement", "validate", "merge"] as const;
 export type Stage = typeof STAGES[number];
@@ -21,9 +22,49 @@ export type AgentSettings = {
   model?: string; // Compatibility with the original Codex-only config.
   codexBin?: string;
   opencodeBin?: string;
+  herdrBin?: string;
 };
 export type ResolvedAgent = Required<AgentConfig> & { binary: string };
 export type RoleAgents = Record<Role, ResolvedAgent>;
+
+export type Herdr = { bin: string; env: NodeJS.ProcessEnv };
+
+export function makeHerdr(bin: string | undefined, socketPath: string | undefined, baseEnv: NodeJS.ProcessEnv = process.env): Herdr {
+  const found = Bun.which(bin ?? "herdr");
+  if (!found) throw new Error(`Executable not found: ${bin ?? "herdr"}`);
+  const env = { ...baseEnv };
+  if (socketPath) env.HERDR_SOCKET_PATH = socketPath;
+  return { bin: found, env };
+}
+
+async function herdrCommand(herdr: Herdr, args: string[], timeoutMs: number) {
+  if (timeoutMs <= 0) throw new Error("Issue timeout exceeded before calling herdr");
+  return command([herdr.bin, ...args], { env: herdr.env, timeoutMs: timeoutMs + 15_000 });
+}
+
+async function herdrJson(herdr: Herdr, args: string[], timeoutMs: number): Promise<any> {
+  return JSON.parse(await herdrCommand(herdr, args, timeoutMs));
+}
+
+export async function createHerdrWorktree(herdr: Herdr, repo: string, branch: string, baseRef: string, label: string, timeoutMs = 120_000) {
+  const out = await herdrJson(herdr, ["worktree", "create", "--cwd", repo, "--branch", branch, "--base", baseRef, "--label", label, "--no-focus"], timeoutMs);
+  const workspaceId = out?.result?.workspace?.workspace_id;
+  const rootPane = out?.result?.root_pane?.pane_id;
+  const worktree = out?.result?.worktree?.path;
+  if (typeof workspaceId !== "string" || typeof rootPane !== "string" || typeof worktree !== "string" || out?.result?.worktree?.branch !== branch) {
+    throw new Error(`Unexpected herdr worktree create response: ${JSON.stringify(out).slice(0, 1000)}`);
+  }
+  return { workspaceId, rootPane, worktree };
+}
+
+export async function closeHerdrWorkspace(herdr: Herdr, workspaceId: string, timeoutMs = 30_000) {
+  await herdrJson(herdr, ["workspace", "close", workspaceId], timeoutMs);
+}
+
+// Connectivity preflight for --install: fails when no Herdr server answers on the socket.
+export async function herdrPing(herdr: Herdr) {
+  await herdrJson(herdr, ["workspace", "list"], 15_000);
+}
 
 function validateConfig(value: unknown, path: string): asserts value is AgentConfig {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${path} must be an agent config object`);
@@ -48,11 +89,11 @@ function overlay(base: Required<AgentConfig>, override: AgentConfig): Required<A
 
 function validateTransport(agent: Required<AgentConfig>, path: string) {
   const owned = agent.agent === "codex"
-    ? ["--cd", "-C", "--output-last-message", "-o", "--output-schema", "--json", "--color", "--model", "-m"]
-    : ["--dir", "--format", "--model", "-m", "--variant", "--attach", "--command", "--session", "-s", "--continue", "-c", "--fork"];
+    ? ["--cd", "-C", "--model", "-m"]
+    : ["--dir", "--model", "-m", "--variant", "--attach", "--command", "--session", "-s", "--continue", "-c", "--fork"];
   for (const arg of agent.extraArgs) {
     if (arg === "--" || owned.some((flag) => arg === flag || arg.startsWith(flag + "=") || (flag.length === 2 && arg.startsWith(flag) && arg.length > 2))) {
-      throw new Error(`${path}.extraArgs cannot override managed transport/model argument ${arg}; use model or reasoningEffort for those settings`);
+      throw new Error(`${path}.extraArgs cannot override managed transport argument ${arg}; use model or reasoningEffort for those settings`);
     }
   }
 }
@@ -74,71 +115,98 @@ export function resolveRoleAgents(config: AgentSettings): RoleAgents {
   })) as RoleAgents;
 }
 
-export function agentArgs(agent: ResolvedAgent, cwd: string, resultPath: string, schemaPath: string) {
+// Native arguments passed after `--` to `herdr agent start`. The pane provides cwd and
+// environment; herdr launches the interactive TUI, so headless transport flags do not apply.
+export function agentArgs(agent: ResolvedAgent): string[] {
   if (agent.agent === "codex") {
-    return [agent.binary, "exec", "--dangerously-bypass-approvals-and-sandbox", ...agent.extraArgs,
+    return ["--dangerously-bypass-approvals-and-sandbox", ...agent.extraArgs,
       ...(agent.model ? ["--model", agent.model] : []),
-      ...(agent.reasoningEffort ? ["-c", `model_reasoning_effort=${JSON.stringify(agent.reasoningEffort)}`] : []),
-      "--cd", cwd, "--json", "--color", "never", "--output-schema", schemaPath, "--output-last-message", resultPath, "-"];
+      ...(agent.reasoningEffort ? ["-c", `model_reasoning_effort=${JSON.stringify(agent.reasoningEffort)}`] : [])];
   }
-  return [agent.binary, "run", "--auto", ...agent.extraArgs,
-    ...(agent.model ? ["--model", agent.model] : []), ...(agent.reasoningEffort ? ["--variant", agent.reasoningEffort] : []),
-    "--dir", cwd, "--format", "json"];
+  return ["--auto", ...agent.extraArgs,
+    ...(agent.model ? ["--model", agent.model] : []), ...(agent.reasoningEffort ? ["--variant", agent.reasoningEffort] : [])];
+}
+
+function paneEnvArgs(env: NodeJS.ProcessEnv): string[] {
+  const args: string[] = [];
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined || key.startsWith("HERDR_") || value.includes("\0")) continue;
+    args.push("--env", `${key}=${value}`);
+  }
+  return args;
 }
 
 export class AgentCleanupError extends Error {}
 
-export async function runAgent(agent: ResolvedAgent, input: {
-  cwd: string; stageDir: string; contextPath: string; prompt: string; schemaPath: string;
+export type HerdrLaunch = {
+  herdr: Herdr; workspaceId: string; rootPane: string; name: string; cwd: string;
+  stageDir: string; contextPath: string; schemaPath: string; prompt: string;
   timeoutMs: number; signal?: AbortSignal; env: NodeJS.ProcessEnv;
-  onChild?: (pid: number) => void;
-}) {
+  onPane?: (paneId: string) => void;
+};
+
+// Every stage runs as a named agent in a dedicated worker pane inside the issue's Herdr
+// workspace. The pane is created fresh per stage and always closed afterwards, which reaps
+// the agent process; all handoff happens through files on disk (result.json) and Linear.
+export async function runAgent(agent: ResolvedAgent, input: HerdrLaunch) {
   if (input.signal?.aborted) throw new Error("Interrupted before starting the stage");
   if (input.timeoutMs <= 0) throw new Error("Issue timeout exceeded before starting the stage");
-  if (!Bun.which(agent.binary)) throw new Error(`Executable not found for ${agent.agent}: ${agent.binary}`);
+  if (!/^[a-z][a-z0-9_-]{0,31}$/.test(input.name)) throw new Error(`Invalid herdr agent name: ${input.name}`);
   const resultPath = join(input.stageDir, "result.json");
-  const stdoutPath = join(input.stageDir, `${agent.agent}.jsonl`);
-  const stderrPath = join(input.stageDir, `${agent.agent}.stderr.log`);
-  const child = Bun.spawn(agentArgs(agent, input.cwd, resultPath, input.schemaPath), {
-    cwd: input.cwd, stdin: new Blob([input.prompt]), stdout: Bun.file(stdoutPath), stderr: Bun.file(stderrPath),
-    detached: process.platform !== "win32", env: { ...input.env, LINEAR_WATCH_CONTEXT: input.contextPath },
-  });
-  const killGroup = (signal: NodeJS.Signals) => {
-    try { process.platform === "win32" ? child.kill(signal) : process.kill(-child.pid, signal); }
-    catch (error: any) { if (error.code !== "ESRCH") throw error; }
+  const transcriptPath = join(input.stageDir, `${input.name}.tui.log`);
+  const deadline = Date.now() + input.timeoutMs;
+  const left = () => deadline - Date.now();
+  const env: NodeJS.ProcessEnv = { ...input.env, LINEAR_WATCH_CONTEXT: input.contextPath };
+  const binDir = dirname(agent.binary);
+  if (!env.PATH?.split(":").includes(binDir)) env.PATH = [binDir, env.PATH ?? ""].filter(Boolean).join(":");
+
+  const split = await herdrJson(input.herdr, ["pane", "split", input.rootPane, "--direction", "right", "--cwd", input.cwd, "--no-focus", ...paneEnvArgs(env)], left());
+  const paneId = split?.result?.pane?.pane_id;
+  if (typeof paneId !== "string" || !paneId) throw new Error(`herdr pane split did not return a pane id: ${JSON.stringify(split).slice(0, 500)}`);
+  input.onPane?.(paneId);
+
+  const promptAgent = async (text: string, waitMs: number) => {
+    const out = await herdrJson(input.herdr, ["agent", "prompt", input.name, text, "--wait", "--timeout", String(waitMs)], waitMs);
+    const status = out?.result?.agent?.agent_status;
+    if (status === "blocked") {
+      await captureTranscript();
+      throw new Error(`${agent.agent} agent ${input.name} is blocked waiting for interactive input; inspect ${transcriptPath}`);
+    }
   };
-  let timedOut = false;
-  let grace: ReturnType<typeof setTimeout> | undefined;
-  const stop = () => { killGroup("SIGTERM"); grace ??= setTimeout(() => killGroup("SIGKILL"), 10_000); };
-  const timeout = setTimeout(() => { timedOut = true; stop(); }, input.timeoutMs);
-  input.signal?.addEventListener("abort", stop, { once: true });
-  let code: number;
+  const captureTranscript = async () => {
+    try { await Bun.write(transcriptPath, await herdrCommand(input.herdr, ["agent", "read", input.name, "--source", "recent-unwrapped", "--lines", "500"], Math.min(left(), 30_000))); }
+    catch { /* transcript is best effort */ }
+  };
+  const closePane = async () => {
+    try { await herdrJson(input.herdr, ["pane", "close", paneId], Math.max(Math.min(left(), 30_000), 15_000)); }
+    catch (error: any) {
+      if (String(error?.message).includes("pane_not_found")) return;
+      throw new AgentCleanupError(`Could not close herdr pane ${paneId} for agent ${input.name}: ${error.message}`);
+    }
+  };
+  const abortClose = () => { void herdrCommand(input.herdr, ["pane", "close", paneId], 15_000).catch(() => {}); };
+  input.signal?.addEventListener("abort", abortClose, { once: true });
+
   try {
-    input.onChild?.(child.pid);
-    if (input.signal?.aborted) stop();
-    code = await child.exited;
+    const started = await herdrJson(input.herdr, ["agent", "start", input.name, "--kind", agent.agent, "--pane", paneId, "--", ...agentArgs(agent)], left());
+    if (started?.result?.agent?.name !== input.name || started?.result?.agent?.pane_id !== paneId) {
+      throw new Error(`herdr agent start did not confirm ${input.name} in pane ${paneId}: ${JSON.stringify(started).slice(0, 500)}`);
+    }
+    try {
+      await promptAgent(input.prompt, left());
+      if (!(await Bun.file(resultPath).exists())) {
+        await promptAgent(`尚未在 ${resultPath} 找到本阶段结果。请立即把符合 ${input.schemaPath} 的 JSON 写入该文件（覆盖占位内容即可），并把同一 JSON 作为最终回答；不要执行其他工作。`, left());
+      }
+    } catch (error) {
+      await captureTranscript();
+      if (input.signal?.aborted) throw new Error(`Interrupted during ${input.name}; closed pane ${paneId} and preserved the worktree and logs`);
+      throw error;
+    }
+    await captureTranscript();
+    if (!(await Bun.file(resultPath).exists())) throw new Error(`${agent.agent} agent ${input.name} did not produce a stage result: ${resultPath} (transcript: ${transcriptPath})`);
+    return Bun.file(resultPath).json();
   } finally {
-    clearTimeout(timeout); clearTimeout(grace); input.signal?.removeEventListener("abort", stop);
-    try { killGroup("SIGKILL"); await child.exited; }
-    catch (error: any) { throw new AgentCleanupError(`Could not terminate ${agent.agent} process group ${child.pid}: ${error.message}`); }
+    input.signal?.removeEventListener("abort", abortClose);
+    await closePane();
   }
-  if (timedOut) throw new Error(`Issue timeout exceeded during ${agent.agent}; inspect ${input.stageDir}`);
-  if (input.signal?.aborted) throw new Error("Interrupted; inspect the preserved worktree and stage logs before resuming");
-  if (code !== 0) throw new Error(`${agent.agent} exited ${code}; see ${stderrPath}`);
-  if (agent.agent === "opencode") {
-    let lastText: string | undefined;
-    for (const line of (await Bun.file(stdoutPath).text()).split("\n")) {
-      let event: any;
-      try { event = JSON.parse(line); } catch { continue; }
-      if (event.type === "error") throw new Error(`OpenCode reported an error: ${JSON.stringify(event.error).slice(0, 2000)}`);
-      if (event.type === "text" && typeof event.part?.text === "string" && event.part.text.trim()) lastText = event.part.text;
-    }
-    if (!(await Bun.file(resultPath).exists()) && lastText) {
-      // OpenCode has no --output-last-message. Accept its final JSON text when the agent did not write the result file.
-      const text = lastText.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/, "$1");
-      await Bun.write(resultPath, JSON.stringify(JSON.parse(text), null, 2));
-    }
-  }
-  if (!(await Bun.file(resultPath).exists())) throw new Error(`${agent.agent} did not produce a stage result: ${resultPath}`);
-  return Bun.file(resultPath).json();
 }
