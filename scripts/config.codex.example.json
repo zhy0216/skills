@@ -1,0 +1,31 @@
+{
+  "routes": [
+    {
+      "repo": "/absolute/path/to/repository",
+      "team": "EZT",
+      "todoState": "Todo",
+      "inProgressState": "In Progress",
+      "doneState": "Done"
+    }
+  ],
+  "defaults": {
+    "agent": "codex",
+    "model": null,
+    "reasoningEffort": "xhigh",
+    "extraArgs": ["--ephemeral"]
+  },
+  "agents": {
+    "orchestrator": {
+      "reasoningEffort": "medium"
+    },
+    "planner": {
+      "reasoningEffort": "high"
+    },
+    "executor": {
+      "reasoningEffort": "xhigh"
+    }
+  },
+  "timeoutMinutes": 720,
+  "linearBin": "linear-cli",
+  "codexBin": "codex"
+}

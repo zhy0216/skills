@@ -1,0 +1,17 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["issueId", "stage", "outcome", "complexity", "commit", "validatedBaseSha", "validationCommentId", "planDocumentId", "planUrl", "summary"],
+  "properties": {
+    "issueId": { "type": "string" },
+    "stage": { "type": "string", "enum": ["analyze", "plan", "todos", "implement", "validate", "merge"] },
+    "outcome": { "type": "string", "enum": ["completed", "blocked", "failed", "needs_validation"] },
+    "complexity": { "type": ["string", "null"], "enum": ["simple", "complex", null] },
+    "commit": { "type": ["string", "null"] },
+    "validatedBaseSha": { "type": ["string", "null"] },
+    "validationCommentId": { "type": ["string", "null"] },
+    "planDocumentId": { "type": ["string", "null"] },
+    "planUrl": { "type": ["string", "null"] },
+    "summary": { "type": "string" }
+  }
+}

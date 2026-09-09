@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["issueId", "outcome", "nextStage", "instructions", "summary"],
+  "properties": {
+    "issueId": { "type": "string" },
+    "outcome": { "type": "string", "enum": ["dispatch", "completed", "blocked"] },
+    "nextStage": { "type": ["string", "null"], "enum": ["analyze", "plan", "todos", "implement", "validate", "merge", null] },
+    "instructions": { "type": "string" },
+    "summary": { "type": "string" }
+  }
+}

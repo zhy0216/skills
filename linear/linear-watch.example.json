@@ -1,0 +1,22 @@
+{
+  "routes": [
+    {
+      "repo": "/absolute/path/to/repository",
+      "team": "ENG",
+      "project": "Project name or UUID",
+      "todoState": "Todo"
+    }
+  ],
+  "defaults": {
+    "agent": "codex",
+    "model": null,
+    "reasoningEffort": "xhigh",
+    "extraArgs": []
+  },
+  "agents": {
+    "orchestrator": { "reasoningEffort": "high" },
+    "planner": { "agent": "opencode", "model": null, "reasoningEffort": "high", "extraArgs": ["--agent", "build"] },
+    "executor": {}
+  },
+  "timeoutMinutes": 720
+}

@@ -1,0 +1,31 @@
+{
+  "routes": [
+    {
+      "repo": "/absolute/path/to/repository",
+      "team": "EZT",
+      "todoState": "Todo",
+      "inProgressState": "In Progress",
+      "doneState": "Done"
+    }
+  ],
+  "defaults": {
+    "agent": "opencode",
+    "model": null,
+    "reasoningEffort": null,
+    "extraArgs": ["--agent", "build"]
+  },
+  "agents": {
+    "orchestrator": {
+      "extraArgs": ["--agent", "build", "--title", "Linear orchestrator"]
+    },
+    "planner": {
+      "extraArgs": ["--agent", "build", "--title", "Linear planner"]
+    },
+    "executor": {
+      "extraArgs": ["--agent", "build", "--title", "Linear executor"]
+    }
+  },
+  "timeoutMinutes": 720,
+  "linearBin": "linear-cli",
+  "opencodeBin": "opencode"
+}
