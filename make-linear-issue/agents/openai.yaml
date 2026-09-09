@@ -1,0 +1,4 @@
+interface:
+  display_name: "Make Linear Issue"
+  short_description: "以资深产品经理视角探索仓库功能缺口，创建含优先级和依赖的 Linear Backlog issues"
+  default_prompt: "使用 $make-linear-issue 探索当前仓库的功能缺口，将有证据支持的需求创建为 Linear Backlog issues，注明优先级、验收标准和依赖关系。"
