@@ -44,6 +44,7 @@
     }
   },
   "timeoutMinutes": 720,
+  "maxActiveAgents": 8,
   "linearBin": "linear-cli",
   "herdrBin": "herdr",
   "opencodeBin": "opencode"

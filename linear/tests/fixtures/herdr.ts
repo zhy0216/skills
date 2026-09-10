@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 
 type Pane = { workspace: string; cwd: string; env: Record<string, string>; alive: boolean; childPid?: number };
-type Agent = { pane: string; kind: string; args: string[]; alive: boolean; prompts: number };
+type Agent = { pane: string; kind: string; args: string[]; alive: boolean; prompts: number; status?: string };
 type State = { seq: number; workspaces: Record<string, { label: string; closed: boolean }>; panes: Record<string, Pane>; agents: Record<string, Agent> };
 
 const statePath = process.env.LINEAR_HERDR_STATE;
@@ -115,6 +115,13 @@ if (group === "agent" && sub === "prompt") {
   if (timedOut) fail("wait_timeout", `agent ${name} prompt timed out after ${timeoutMs}ms; child killed`);
   if (bool("--wait") && code !== 0) fail("agent_failed", `${agent.kind} exited ${code}: ${stderr.slice(0, 2000)}`);
   json({ type: "agent_prompted", agent: { name, pane_id: agent.pane, agent: agent.kind, agent_status: "done", last_exit: code } });
+}
+
+if (group === "agent" && sub === "list") {
+  const agents = Object.entries(state.agents)
+    .filter(([, agent]) => agent.alive && state.panes[agent.pane]?.alive)
+    .map(([name, agent]) => ({ name, pane_id: agent.pane, workspace_id: state.panes[agent.pane]!.workspace, agent: agent.kind, agent_status: agent.status ?? "working" }));
+  json({ type: "agent_list", agents });
 }
 
 if (group === "agent" && sub === "read") {

@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { command, digest, LinearClient, type Issue } from "../linear/scripts/linear-client";
-import { AgentCleanupError, closeHerdrWorkspace, createHerdrWorktree, herdrPing, makeHerdr, resolveRoleAgents, STAGE_ROLES, type Herdr, type AgentSettings, type RoleAgents } from "../linear/scripts/agents";
+import { AgentCleanupError, closeHerdrWorkspace, createHerdrWorktree, herdrPing, makeHerdr, resolveRoleAgents, MAX_ACTIVE_AGENTS, STAGE_ROLES, type Herdr, type AgentSettings, type RoleAgents } from "../linear/scripts/agents";
 import { runStages, type RunContext } from "../linear/scripts/stages";
 
 export const SCHEDULE = "0 */4 * * *";
@@ -29,10 +29,11 @@ export type Config = AgentSettings & {
   herdrSocket?: string;
   stateDir?: string;
   timeoutMinutes?: number;
+  maxActiveAgents?: number;
 };
 type Runtime = Config & {
   linearBin: string; codexBin: string; opencodeBin: string; stateDir: string; timeoutMinutes: number;
-  herdrSocket: string; herdr: Herdr; roleAgents: RoleAgents;
+  maxActiveAgents: number; herdrSocket: string; herdr: Herdr; roleAgents: RoleAgents;
 };
 type Result = { issueId: string; outcome: "completed" | "blocked" | "failed"; baseBranch: string; commit: string | null; validationCommentId: string | null; summary: string };
 
@@ -52,6 +53,8 @@ export async function loadConfig(path: string, overrides: Pick<Config, "linearBi
   });
   const timeoutMinutes = config.timeoutMinutes ?? 720;
   if (!Number.isFinite(timeoutMinutes) || timeoutMinutes <= 0) throw new Error("timeoutMinutes must be positive");
+  const maxActiveAgents = config.maxActiveAgents ?? MAX_ACTIVE_AGENTS;
+  if (!Number.isInteger(maxActiveAgents) || maxActiveAgents < 1) throw new Error(`maxActiveAgents must be a positive integer (default ${MAX_ACTIVE_AGENTS})`);
   const binary = (name: string) => {
     const found = Bun.which(name);
     if (!found) throw new Error(`Executable not found: ${name}`);
@@ -59,7 +62,7 @@ export async function loadConfig(path: string, overrides: Pick<Config, "linearBi
   };
   const herdrSocket = config.herdrSocket ? resolve(dirname(path), config.herdrSocket) : process.env.HERDR_SOCKET_PATH || DEFAULT_HERDR_SOCKET;
   return {
-    ...config, routes, timeoutMinutes, herdrSocket,
+    ...config, routes, timeoutMinutes, maxActiveAgents, herdrSocket,
     linearBin: binary(config.linearBin ?? "linear-cli"),
     codexBin: Bun.which(config.codexBin ?? "codex") ?? config.codexBin ?? "codex",
     opencodeBin: Bun.which(config.opencodeBin ?? "opencode") ?? config.opencodeBin ?? "opencode",
@@ -159,7 +162,7 @@ export async function runOnce(config: Runtime, options: { dryRun?: boolean; sign
       const repo = await git(route.repo, "rev-parse", "--show-toplevel");
       const commonDir = await git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir");
       const baseBranch = await resolveBaseBranch(repo, route.baseBranch);
-      if (options.dryRun) { summary.planned++; log("would-start", { issue: issue.identifier, repo, baseBranch, agents: config.roleAgents, stageRoles: STAGE_ROLES }); continue; }
+      if (options.dryRun) { summary.planned++; log("would-start", { issue: issue.identifier, repo, baseBranch, agents: config.roleAgents, stageRoles: STAGE_ROLES, maxActiveAgents: config.maxActiveAgents }); continue; }
       issueLock = acquireLock(join(STATE_ROOT, "locks", `issue-${digest(issue.id)}`), { issue: issue.identifier, repo });
       if (!issueLock) { summary.skipped++; log("issue-locked", { issue: issue.identifier, lock: join(STATE_ROOT, "locks", `issue-${digest(issue.id)}`) }); continue; }
       const repoLockPath = join(commonDir, "linear-watch.lock");
@@ -189,6 +192,7 @@ export async function runOnce(config: Runtime, options: { dryRun?: boolean; sign
       pickedUp = true;
       const result = await runStages(context, config.roleAgents, {
         herdr: config.herdr, client, timeoutMs: config.timeoutMinutes * 60_000, signal: options.signal, log,
+        maxAgents: config.maxActiveAgents,
         env: { ...process.env, LINEAR_CLI_BIN: config.linearBin,
           ...(config.linearProfile ? { LINEAR_CLI_PROFILE: config.linearProfile } : {}) },
         onAgent: (role, stage, info) => {
@@ -247,7 +251,7 @@ export async function main(args = Bun.argv.slice(2)) {
     install: { type: "boolean" }, uninstall: { type: "boolean" }, help: { type: "boolean" },
   } });
   if (values.help) {
-    console.log(`bun scripts/linear-watch.ts [--config CONFIG] [--once | --test | --dry-run | --install | --uninstall]\nDefault: scan now, then Bun.cron('${SCHEDULE}') in the foreground.\n--test processes at most one eligible Todo through the configured stages, then exits even on failure.\n--dry-run reads Linear/Git and shows resolved role configs and stage ownership; --install registers an OS cron job.\nAgent config: defaults and agents.{orchestrator,planner,executor} support agent, model, reasoningEffort, extraArgs.\nPlanner owns analyze/plan/todos; executor owns implement/validate/merge; orchestrator directs the workflow.\nAll roles run inside Herdr: each issue gets a worktree workspace via 'herdr worktree create' and each stage an agent in its own pane. herdrBin selects the CLI; herdrSocket selects the session socket (default: HERDR_SOCKET_PATH or ${DEFAULT_HERDR_SOCKET}).\nConfig format: linear/linear-watch.example.json. Default config: ${DEFAULT_CONFIG}`);
+    console.log(`bun scripts/linear-watch.ts [--config CONFIG] [--once | --test | --dry-run | --install | --uninstall]\nDefault: scan now, then Bun.cron('${SCHEDULE}') in the foreground.\n--test processes at most one eligible Todo through the configured stages, then exits even on failure.\n--dry-run reads Linear/Git and shows resolved role configs and stage ownership; --install registers an OS cron job.\nAgent config: defaults and agents.{orchestrator,planner,executor} support agent, model, reasoningEffort, extraArgs.\nPlanner owns analyze/plan/todos; executor owns implement/validate/merge; orchestrator directs the workflow.\nAll roles run inside Herdr: each issue gets a worktree workspace via 'herdr worktree create' and each stage an agent in its own pane. herdrBin selects the CLI; herdrSocket selects the session socket (default: HERDR_SOCKET_PATH or ${DEFAULT_HERDR_SOCKET}).\nCapacity: before every stage agent the watcher polls 'herdr agent list' and waits while the whole session already has maxActiveAgents live (non-done) agents (default ${MAX_ACTIVE_AGENTS}); the issue timeout bounds the wait.\nConfig format: linear/linear-watch.example.json. Default config: ${DEFAULT_CONFIG}`);
     return;
   }
   if ([values.once, values.test, values["dry-run"], values.install, values.uninstall].filter(Boolean).length > 1) throw new Error("Choose only one run mode");

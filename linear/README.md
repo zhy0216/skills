@@ -42,7 +42,7 @@ scripts/config.opencode.example.json
 
 每条 route 至少提供 `team` 或 `project`；两者同时提供时都必须匹配，支持 Team key/name/UUID 和 Project name/UUID。不要设置重叠路由；同一个 issue 匹配多条会报告歧义并跳过。`todoState` 默认 `Todo`，可设置实际名称或 ID。`inProgressState`、`doneState` 可指定本 Team 的状态。`baseBranch` 可选 `main`/`master`；从 feature 分支启动且无法确定原主分支时应显式设置。
 
-可选顶层配置：`linearProfile`、`linearBin`、`codexBin`、`opencodeBin`、`herdrBin`、`herdrSocket`、`stateDir`、`defaults`、`agents`。任务全部通过 Herdr 执行：每条 issue 用 `herdr worktree create` 建立独立 worktree 与 workspace，orchestrator/planner/executor 的每个阶段都在该 workspace 的专用 pane 里以交互式 agent 启动（Codex 带 YOLO 参数、OpenCode 带 `--auto`），一次一个，结束即关闭 pane；成功后 watcher `workspace close` 并删除 worktree 和分支，失败时保留现场。`herdrSocket` 选择目标 session 的 socket（默认取 `HERDR_SOCKET_PATH`，否则 `~/.config/herdr/herdr.sock`，即 default session；命名 session 用其 `sessions/<name>/herdr.sock`）。`timeoutMinutes` 默认 720，是一条 issue 所有阶段共用的执行时限；允许任务跨过下一个四小时刻度，期间用锁防止重入。旧顶层 `model` 仍兼容，新配置请使用 `defaults.model`。
+可选顶层配置：`linearProfile`、`linearBin`、`codexBin`、`opencodeBin`、`herdrBin`、`herdrSocket`、`stateDir`、`defaults`、`agents`、`timeoutMinutes`、`maxActiveAgents`。任务全部通过 Herdr 执行：每条 issue 用 `herdr worktree create` 建立独立 worktree 与 workspace，orchestrator/planner/executor 的每个阶段都在该 workspace 的专用 pane 里以交互式 agent 启动（Codex 带 YOLO 参数、OpenCode 带 `--auto`），一次一个，结束即关闭 pane；成功后 watcher `workspace close` 并删除 worktree 和分支，失败时保留现场。`herdrSocket` 选择目标 session 的 socket（默认取 `HERDR_SOCKET_PATH`，否则 `~/.config/herdr/herdr.sock`，即 default session；命名 session 用其 `sessions/<name>/herdr.sock`）。`timeoutMinutes` 默认 720，是一条 issue 所有阶段共用的执行时限；允许任务跨过下一个四小时刻度，期间用锁防止重入。`maxActiveAgents` 默认 8，是整个 Herdr session 允许并存的活动 agent（`herdr agent list` 中状态非 `done`）上限；每次启动阶段 agent 前都会统计活动数，达到上限就退避轮询等待，直到有空位或超出 `timeoutMinutes`，因此等待也会占用该 issue 的执行时限。旧顶层 `model` 仍兼容，新配置请使用 `defaults.model`。
 
 ### 三个角色的 agent 配置
 
@@ -122,11 +122,11 @@ bun scripts/linear-watch.ts --config /absolute/path/config.json --uninstall
 
 ## 执行与恢复
 
-每轮先完成所有分页，再按 priority、创建时间顺序派发，issue 之间顺序执行；失败不会阻止本轮其他 issue。领取 issue 后 watcher 先用 `herdr worktree create` 建立独立 worktree 和 workspace。简单任务执行 `analyze → implement → validate → merge`，复杂任务在 analyze 后增加 `plan → todos`。每次交接先运行一轮 orchestrator，它读取证据、选择下一阶段并给出指令；脚本使用所属角色的配置在该 workspace 的新 pane 中启动交互式 agent。各阶段通过同一个 worktree、Linear 产物和结构化上下文交接。最终验证产物发布到 comments 后，快进合入最初记录的本地 main/master，再标记 Done；成功读回后 watcher 关闭 workspace 并清理 worktree 和分支，失败则保留现场。只要求本地合并时不会自动 push。
+每轮先完成所有分页，再按 priority、创建时间顺序派发，issue 之间顺序执行；失败不会阻止本轮其他 issue。领取 issue 后 watcher 先用 `herdr worktree create` 建立独立 worktree 和 workspace。每次启动阶段 agent 前先执行活动数检查：`herdr agent list` 统计状态非 `done` 的 agent，达到 `maxActiveAgents`（默认 8）时以 0.5～15s 退避轮询，直到 session 空闲出位置才继续，等待计入该 issue 的 `timeoutMinutes`；多个 watcher 并发检查时瞬时可能短暂各超一个。简单任务执行 `analyze → implement → validate → merge`，复杂任务在 analyze 后增加 `plan → todos`。每次交接先运行一轮 orchestrator，它读取证据、选择下一阶段并给出指令；脚本使用所属角色的配置在该 workspace 的新 pane 中启动交互式 agent。各阶段通过同一个 worktree、Linear 产物和结构化上下文交接。最终验证产物发布到 comments 后，快进合入最初记录的本地 main/master，再标记 Done；成功读回后 watcher 关闭 workspace 并清理 worktree 和分支，失败则保留现场。只要求本地合并时不会自动 push。
 
 orchestrator 可以要求重新规划或返工；相关后续结果会失效，需要重新验证。主分支在验证后或合并前前进时，协调流程再次派发 executor/validate 和 executor/merge。主分支变化累计三次导致验证失效时停止；一条 issue 最多运行 24 轮协调决策，超时或无进展时保留工作树和日志。
 
-默认日志位于 `$XDG_STATE_HOME/linear-watch` 或 `~/.local/state/linear-watch`。`watcher.jsonl` 是调度日志；每条 issue 的 `runs/<issue>-<run-id>/context.json` 保存 worktree、Herdr workspace/pane、已解析的角色配置、阶段结果、执行历史和协调决策。每阶段的 `stages/<stage>-<attempt>/` 包含独立 `context.json`、`result.json` 和 `<agent 名>.tui.log`（agent 结束后抓取的 pane 转录）；`orchestrator/<turn>/` 同理保存每轮协调者的 context、决策 JSON 和转录。根目录的 `result.json` 是最终汇总，`verified.json` 是完成后的读回确认，`failure.json` 保存失败原因。
+默认日志位于 `$XDG_STATE_HOME/linear-watch` 或 `~/.local/state/linear-watch`。`watcher.jsonl` 是调度日志（因活动数等待时记录 `agent-capacity-wait`，含 `active`/`max`/已等待毫秒）；每条 issue 的 `runs/<issue>-<run-id>/context.json` 保存 worktree、Herdr workspace/pane、已解析的角色配置、阶段结果、执行历史和协调决策。每阶段的 `stages/<stage>-<attempt>/` 包含独立 `context.json`、`result.json` 和 `<agent 名>.tui.log`（agent 结束后抓取的 pane 转录）；`orchestrator/<turn>/` 同理保存每轮协调者的 context、决策 JSON 和转录。根目录的 `result.json` 是最终汇总，`verified.json` 是完成后的读回确认，`failure.json` 保存失败原因。
 
 退出码 0 不会自动算完成：watcher 在交接时读回 worktree、Document、checklist 和验证评论，最终再核对主分支包含返回的 commit、Linear 已 completed，且验证评论属于该 issue 并包含该 commit。
 

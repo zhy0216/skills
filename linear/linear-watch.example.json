@@ -19,5 +19,6 @@
     "executor": {}
   },
   "timeoutMinutes": 720,
+  "maxActiveAgents": 8,
   "herdrBin": "herdr"
 }

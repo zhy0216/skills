@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSyn
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { command, LinearClient, type Issue } from "../scripts/linear-client";
+import { countActiveAgents, makeHerdr, MAX_ACTIVE_AGENTS } from "../scripts/agents";
 import { publishComment, publishPlan, publishTodos, replaceTodoSection, TODO_HEADING, transition } from "../scripts/linear-issue";
 import { acquireLock, cronWorkerSource, git, loadConfig, matchesRoute, resolveBaseBranch, runOnce, SCHEDULE, type Config } from "../../scripts/linear-watch";
 
@@ -298,6 +299,68 @@ describe("watcher and Git integration", () => {
       expect(readdirSync(runs)).toHaveLength(1);
     } finally { abort.abort(); await active; }
   }, 5_000);
+
+  test("maxActiveAgents defaults to 8 and only accepts positive integers", async () => {
+    const s = await setup();
+    expect((await s.config()).maxActiveAgents).toBe(MAX_ACTIVE_AGENTS);
+    expect((await s.config({ maxActiveAgents: 3 })).maxActiveAgents).toBe(3);
+    await expect(s.config({ maxActiveAgents: 0 })).rejects.toThrow("maxActiveAgents");
+    await expect(s.config({ maxActiveAgents: 2.5 })).rejects.toThrow("maxActiveAgents");
+  });
+
+  test("counts only non-done agents reported by herdr agent list", async () => {
+    const s = await setup();
+    await Bun.write(join(s.root, "herdr-state.json"), JSON.stringify({
+      seq: 2,
+      workspaces: { x0: { label: "external", closed: false } },
+      panes: { "x0:p1": { workspace: "x0", cwd: s.root, env: {}, alive: true }, "x0:p2": { workspace: "x0", cwd: s.root, env: {}, alive: true } },
+      agents: {
+        ext1: { pane: "x0:p1", kind: "codex", args: [], alive: true, prompts: 0 },
+        ext2: { pane: "x0:p2", kind: "opencode", args: [], alive: true, prompts: 0, status: "done" },
+      },
+    }));
+    expect(await countActiveAgents(makeHerdr(join(s.root, "herdr"), join(s.root, "herdr.sock")))).toBe(1);
+  });
+
+  test("waits for Herdr agent capacity before dispatching a stage, then proceeds when slots free up", async () => {
+    const s = await setup(); const repo = await initRepo(s.root);
+    const herdrPath = join(s.root, "herdr-state.json");
+    await Bun.write(herdrPath, JSON.stringify({
+      seq: 2,
+      workspaces: { x0: { label: "external", closed: false } },
+      panes: { "x0:p1": { workspace: "x0", cwd: repo, env: {}, alive: true }, "x0:p2": { workspace: "x0", cwd: repo, env: {}, alive: true } },
+      agents: {
+        ext1: { pane: "x0:p1", kind: "codex", args: [], alive: true, prompts: 0 },
+        ext2: { pane: "x0:p2", kind: "opencode", args: [], alive: true, prompts: 0 },
+      },
+    }));
+    const config = await s.config({ maxActiveAgents: 2 });
+    const logsPath = join(s.root, "logs/watcher.jsonl");
+    const readEvents = () => existsSync(logsPath) ? readFileSync(logsPath, "utf8").trim().split("\n").map((line) => JSON.parse(line)) : [];
+    const run = runOnce(config);
+    const free = async () => {
+      const busy = await Bun.file(herdrPath).json();
+      for (const pane of ["x0:p1", "x0:p2"]) busy.panes[pane].alive = false;
+      await Bun.write(herdrPath, JSON.stringify(busy));
+    };
+    let failure: unknown;
+    try {
+      const deadline = Date.now() + 5_000;
+      while (!readEvents().some((event) => event.event === "agent-capacity-wait")) {
+        if (Date.now() > deadline) throw new Error("Watcher never reported waiting for agent capacity");
+        await Bun.sleep(25);
+      }
+      expect((await s.state()).issues[0].state.name).toBe("Todo");
+      expect(existsSync(join(s.root, "logs/runs"))).toBe(true);
+    } catch (error) { failure = error; }
+    await free();
+    const result = await run;
+    if (failure) throw failure;
+    expect(result.completed).toBe(1);
+    const waits = readEvents().filter((event) => event.event === "agent-capacity-wait");
+    expect(waits.length).toBeGreaterThanOrEqual(1);
+    expect(waits[0].active).toBe(2); expect(waits[0].max).toBe(2); expect(waits[0].agent).toMatch(/^lin-eng-1-/);
+  }, 15_000);
 
   test("OS cron worker resolves its config and executables from an unrelated working directory", async () => {
     const s = await setup(); await initRepo(s.root);

@@ -2,6 +2,7 @@ import { dirname, join } from "node:path";
 import { command } from "./linear-client";
 
 export const STAGES = ["analyze", "plan", "todos", "implement", "validate", "merge"] as const;
+export const MAX_ACTIVE_AGENTS = 8;
 export type Stage = typeof STAGES[number];
 export const ROLES = ["orchestrator", "planner", "executor"] as const;
 export type Role = typeof ROLES[number];
@@ -64,6 +65,43 @@ export async function closeHerdrWorkspace(herdr: Herdr, workspaceId: string, tim
 // Connectivity preflight for --install: fails when no Herdr server answers on the socket.
 export async function herdrPing(herdr: Herdr) {
   await herdrJson(herdr, ["workspace", "list"], 15_000);
+}
+
+// Agents whose CLI has exited stay listed with status "done" until their pane closes; only a
+// live agent (working/idle/blocked/unknown) occupies capacity in the shared Herdr session.
+export async function countActiveAgents(herdr: Herdr, timeoutMs = 30_000): Promise<number> {
+  const out = await herdrJson(herdr, ["agent", "list"], timeoutMs);
+  const agents = out?.result?.agents;
+  if (!Array.isArray(agents)) throw new Error(`Unexpected herdr agent list response: ${JSON.stringify(out).slice(0, 500)}`);
+  return agents.filter((agent: any) => agent?.agent_status !== "done").length;
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const onAbort = () => { clearTimeout(timer); reject(new Error("Interrupted while waiting for Herdr agent capacity")); };
+    const timer = setTimeout(() => { signal?.removeEventListener("abort", onAbort); resolve(); }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+// Backoff-poll herdr agent list until fewer than maxAgents are active. Callers check right
+// before each launch; concurrent launchers can still overshoot the cap momentarily by one.
+export async function waitForAgentCapacity(herdr: Herdr, maxAgents: number, options: {
+  deadline: number; signal?: AbortSignal; onWait?: (active: number, waitedMs: number) => void;
+}): Promise<void> {
+  if (maxAgents <= 0) return;
+  const startedAt = Date.now();
+  let delay = 500;
+  for (;;) {
+    if (options.signal?.aborted) throw new Error("Interrupted while waiting for Herdr agent capacity");
+    const left = options.deadline - Date.now();
+    if (left <= 0) throw new Error(`Issue timeout exceeded while waiting for Herdr agent capacity to drop below ${maxAgents}`);
+    const active = await countActiveAgents(herdr, Math.min(left, 30_000));
+    if (active < maxAgents) return;
+    options.onWait?.(active, Date.now() - startedAt);
+    await sleep(Math.min(delay, left), options.signal);
+    delay = Math.min(delay * 2, 15_000);
+  }
 }
 
 function validateConfig(value: unknown, path: string): asserts value is AgentConfig {
