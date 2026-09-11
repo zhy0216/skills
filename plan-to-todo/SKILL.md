@@ -22,7 +22,7 @@ description: 把已有方案（plans/{plan-name}/plan.md 或对话里的任务�
 
 ### todos/README.md
 
-- 一个"优先级"表格：文件、优先级（P0→P2）、难度（easy / medium / hard）、agent、模型 / Codex 推理强度、一句话说明；
+- 一个"优先级"表格：文件、优先级（P0→P2）、难度（easy / medium / hard / extreme）、agent、模型 / Codex 推理强度、一句话说明；
 - 一个"## 文件"有序列表，明确执行顺序；
 - 有依赖时逐行标注"依赖 01-xxx"；
 - 一个"执行偏好"区块，保存 `default_agent: codex` 或 `default_agent: opencode`；仅在用户显式指定时保存 `default_model` / `default_reasoning_effort`。表格显示按分发规则解析后的实际选择，标明单任务指定或继承默认。
@@ -31,7 +31,7 @@ description: 把已有方案（plans/{plan-name}/plan.md 或对话里的任务�
 
 - 文件名数字前缀升序：`01-<slug>.md`、`02-<slug>.md`…
 - **一个 todo 文件 = 一个独立任务 = 一个 worktree = 一个最终 commit**。粒度以"一个 agent 单轮能完成"为准：过大要拆，过碎要合。
-- 文件开头必须声明难度：单独一行 `difficulty: easy | medium | hard`（执行端据此选模型，见"难度判定"）。下一行写 `agent: inherit | codex | opencode`，实际只填一个值；没有单任务指定就写 `inherit`，不要把全局默认固化进每个任务。
+- 文件开头必须声明难度：单独一行 `difficulty: easy | medium | hard | extreme`（执行端据此选模型，见"难度判定"）。下一行写 `agent: inherit | codex | opencode`，实际只填一个值；没有单任务指定就写 `inherit`，不要把全局默认固化进每个任务。
 - 每个文件内用 `## T1 · 标题` 小节列条目，每个条目写清：
   - 要做什么（具体到函数 / 文件 / 行为）；
   - 预计修改的文件列表；
@@ -53,8 +53,9 @@ description: 把已有方案（plans/{plan-name}/plan.md 或对话里的任务�
 - **easy**：改一两处、模式明确、照着旁边代码抄就行（改文案、加字段、补校验、调样式）。
 - **medium**：单模块内多文件协作、需要理解一段现有逻辑再改、写新的测试。
 - **hard**：跨模块 / 跨服务、涉及并发、状态机、数据迁移、协议或架构调整、需要设计新的抽象。
+- **extreme**：仓库级 / 跨系统架构重写、引入或替换全新的基础设施（存储、通信、鉴权），风险高且不可完全回滚。extreme 任务优先再拆小；拆不动时在条目里写明"先出设计文档再动手"。
 
-拿不准 easy 还是 medium 就写 medium；拿不准 medium 还是 hard 就写 hard——宁可升档，不要为了省模型把硬任务压给弱模型。一个文件里条目难度不一致时按最高的那条定档。
+拿不准 easy 还是 medium 就写 medium；拿不准 medium 还是 hard 就写 hard——宁可升档，不要为了省模型把硬任务压给弱模型。extreme 没有比 hard 更高的模型档，只在明确符合定义时使用，不要因拿不准而升。一个文件里条目难度不一致时按最高的那条定档。
 
 ## 3. 收尾
 

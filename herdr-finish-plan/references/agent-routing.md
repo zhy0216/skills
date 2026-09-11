@@ -25,7 +25,7 @@
 - `make-plan` 在方案的“执行偏好”中保留用户的全局和单任务指定，并标明默认 agent 来自宿主还是用户。
 - `plan-to-todo` 在 `todos/README.md` 保存解析后的全局默认值，例如 `default_agent: codex`；只有用户指定模型或推理强度时，才另外保存 `default_model` / `default_reasoning_effort`。
 - 初次拆队列时，本次全局指定优先于方案保存的执行偏好，最后才跟随当前宿主。重拆已有队列时保留未被用户更改的执行偏好，并按任务含义迁移原有单任务指定，不能因改了序号而丢失或错配。
-- 每个 todo 开头写 `difficulty: easy|medium|hard` 和 `agent: inherit|codex|opencode`，均为独立的元数据行。只有单任务指定才写具体 agent；不要把默认分配固化到所有 todo。
+- 每个 todo 开头写 `difficulty: easy|medium|hard|extreme` 和 `agent: inherit|codex|opencode`，均为独立的元数据行。只有单任务指定才写具体 agent；不要把默认分配固化到所有 todo。
 - `auto-dev` 把同一默认值与单任务指定传给规划和拆分阶段；新协调器和手动续跑都读取已保存的队列配置，不因换了宿主而丢失原选择。
 - `herdr-finish-plan` 直接调用时仍支持旧队列：无保存值则跟随当前宿主。本次覆盖只影响尚未启动的任务；已在运行的任务不因收到新默认值而自动重启。
 
@@ -36,6 +36,9 @@
 | easy | `gpt-6-astra` | `high` | `bailian-token-plan/qwen3.8-flash` |
 | medium | `gpt-6-astra` | `xhigh` | `bailian-token-plan/qwen3.8-flash` |
 | hard | `gpt-6-astra` | `max` | `bailian-token-plan/qwen3.8-max` |
+| extreme | `gpt-6-astra` | `max` | `bailian-token-plan/qwen3.8-max` |
+
+extreme 与 hard 同档：模型已到上限，extreme 只标记风险与"先拆小 / 先出设计文档"的处理要求，不改变启动参数。
 
 旧 todo 缺少 `difficulty` 时按 hard 处理并报告；值无效时指出错误，不静默降档。显式传入解析后的模型；Codex 还必须显式传入推理强度，避免本机配置覆盖难度映射。
 
@@ -57,10 +60,10 @@
 在 Herdr 返回的可用 pane 中启动交互式 agent，原生参数放在 `--` 后。以下示例中的名称和 pane ID 需替换为本轮实际值：
 
 ```bash
-# Codex easy（medium 改为 xhigh，hard 改为 max）
+# Codex easy（medium 改为 xhigh，hard / extreme 改为 max）
 herdr agent start <agent-name> --kind codex --pane <pane-id> -- --dangerously-bypass-approvals-and-sandbox --model gpt-6-astra -c 'model_reasoning_effort="high"'
 
-# OpenCode easy / medium（hard 改为 bailian-token-plan/qwen3.8-max）
+# OpenCode easy / medium（hard / extreme 改为 bailian-token-plan/qwen3.8-max）
 herdr agent start <agent-name> --kind opencode --pane <pane-id> -- --auto --model bailian-token-plan/qwen3.8-flash
 ```
 
