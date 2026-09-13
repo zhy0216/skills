@@ -1,11 +1,12 @@
 {
   "routes": [
     {
-      "repo": "/absolute/path/to/repository",
+      "repo": "/home/ubuntu/skills",
       "team": "EZT",
       "todoState": "Todo",
       "inProgressState": "In Progress",
-      "doneState": "Done"
+      "doneState": "Done",
+      "prompt": "定期探索当前 skills 仓库的用户能力缺口：探索有证据的用户能力缺口，最多提交 3 个可独立验收的候选，必要前置项包含在额度内。没有可信缺口可以返回空列表。当前工作区已有本轮尚未提交的新实现，视为现有能力：linear-watch --mode create、Codex creator 角色、可配置创建调度和数量限制、按 Team 加锁、结构化候选和证据校验、Backlog/priority/原生依赖创建及核验、固定 UUID 的部分成功恢复、对应文档和测试。分析 worktree 基于已提交 main，因此看不到这些新实现；不要将上述能力再次作为缺口提单。其他已提交模块按真实代码和现有 Linear issue 去重后探索。"
     }
   ],
   "defaults": {
@@ -17,11 +18,23 @@
   "agents": {
     "orchestrator": {},
     "planner": {},
-    "executor": {}
+    "executor": {},
+    "creator": {
+      "agent": "codex",
+      "model": null,
+      "reasoningEffort": "max",
+      "extraArgs": []
+    }
   },
   "timeoutMinutes": 720,
   "linearBin": "linear-cli",
   "herdrBin": "herdr",
   "codexBin": "codex",
-  "opencodeBin": "opencode"
+  "opencodeBin": "opencode",
+  "creation": {
+    "schedule": "0 */4 * * *",
+    "maxIssuesPerRun": 3
+  },
+  "stateDir": "/home/ubuntu/.local/state/linear-watch",
+  "herdrSocket": "/home/ubuntu/.config/herdr/herdr.sock"
 }
