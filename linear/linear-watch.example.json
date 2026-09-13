@@ -14,11 +14,30 @@
     "extraArgs": []
   },
   "agents": {
-    "orchestrator": { "reasoningEffort": "high" },
-    "planner": { "agent": "opencode", "model": null, "reasoningEffort": "high", "extraArgs": ["--agent", "build"] },
-    "executor": {}
+    "orchestrator": {
+      "reasoningEffort": "high"
+    },
+    "planner": {
+      "agent": "opencode",
+      "model": null,
+      "reasoningEffort": "high",
+      "extraArgs": [
+        "--agent",
+        "build"
+      ]
+    },
+    "executor": {},
+    "creator": {
+      "agent": "codex",
+      "model": null,
+      "reasoningEffort": "xhigh",
+      "extraArgs": []
+    }
   },
   "timeoutMinutes": 720,
   "maxActiveAgents": 8,
-  "herdrBin": "herdr"
+  "herdrBin": "herdr",
+  "creation": {
+    "schedule": "0 2 * * *"
+  }
 }

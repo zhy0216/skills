@@ -5,6 +5,16 @@ import { agentName, parseOrchestratorResult, parseStageResult } from "../scripts
 const argsFor = (settings: AgentSettings) => agentArgs(resolveRoleAgents(settings).executor);
 
 describe("agent configuration", () => {
+  test("creator defaults to Codex and resets incompatible OpenCode defaults", () => {
+    const agents = resolveRoleAgents({ defaults: { agent: "opencode", model: "provider/model", extraArgs: ["--agent", "build"] } });
+    expect(agents.executor.agent).toBe("opencode");
+    expect(agents.creator.agent).toBe("codex");
+    expect(agents.creator.model).toBeNull();
+    expect(agents.creator.reasoningEffort).toBe("xhigh");
+    expect(agents.creator.extraArgs).toEqual([]);
+    expect(resolveRoleAgents({ agents: { creator: { model: "creator-model", reasoningEffort: "high" } } }).creator.model).toBe("creator-model");
+    expect(resolveRoleAgents({ agents: { creator: { agent: "opencode" } } }).creator.agent).toBe("opencode");
+  });
   test("inherits defaults by role and field and keeps legacy model config working", () => {
     const agents = resolveRoleAgents({
       model: "legacy-model",

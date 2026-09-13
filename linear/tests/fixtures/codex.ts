@@ -42,6 +42,11 @@ async function emitResult(result: Record<string, any>) {
     console.log(JSON.stringify({ type: "text", part: { text: JSON.stringify(result) } }));
   }
 }
+if (context.role === "creator") {
+  if (initial.creatorChangesRepo) await Bun.write(join(context.worktree, "unexpected.txt"), "unexpected change");
+  await emitResult({ runId: initial.wrongCreatorRun ? "other" : context.runId, outcome: initial.creatorBlocked ? "blocked" : "completed", summary: initial.creatorBlocked ?? "Explored repository", candidates: initial.creatorCandidates ?? [] });
+  process.exit(0);
+}
 if (context.role === "orchestrator") {
   let nextStage = context.suggestedStage;
   const last = context.stageHistory.at(-1);

@@ -18,6 +18,12 @@ export type Issue = {
 export const ISSUE_FIELDS = `id identifier title url description updatedAt createdAt priority archivedAt
   state { id name type } team { id key name } project { id name }`;
 
+export type Team = Issue["team"];
+export type Project = NonNullable<Issue["project"]>;
+export type WorkflowState = Issue["state"];
+export type IssueRelation = { id: string; type: string; issue: { id: string }; relatedIssue: { id: string } };
+const RELATION_FIELDS = "id type issue { id } relatedIssue { id }";
+
 export async function command(cmd: string[], options: { cwd?: string; input?: string; env?: NodeJS.ProcessEnv; timeoutMs?: number } = {}) {
   const child = Bun.spawn(cmd, {
     cwd: options.cwd,
@@ -81,6 +87,63 @@ export class LinearClient {
         nodes { ${ISSUE_FIELDS} } pageInfo { hasNextPage endCursor }
       }
     }`, {}, (data) => data.issues);
+  }
+
+  async teams(): Promise<Team[]> {
+    return this.pages(`query LinearCreatorTeams($after: String) {
+      teams(first: 100, after: $after) { nodes { id key name } pageInfo { hasNextPage endCursor } }
+    }`, {}, (data) => data.teams);
+  }
+
+  async projects(): Promise<Project[]> {
+    return this.pages(`query LinearCreatorProjects($after: String) {
+      projects(first: 100, after: $after) { nodes { id name } pageInfo { hasNextPage endCursor } }
+    }`, {}, (data) => data.projects);
+  }
+
+  async projectTeams(id: string): Promise<Team[]> {
+    return this.pages(`query LinearCreatorProjectTeams($id: String!, $after: String) {
+      project(id: $id) { teams(first: 100, after: $after) { nodes { id key name } pageInfo { hasNextPage endCursor } } }
+    }`, { id }, (data) => data.project.teams);
+  }
+
+  async workflowStates(teamId: string): Promise<WorkflowState[]> {
+    return this.pages(`query LinearCreatorStates($teamId: ID!, $after: String) {
+      workflowStates(first: 100, after: $after, filter: { team: { id: { eq: $teamId } } }) {
+        nodes { id name type } pageInfo { hasNextPage endCursor }
+      }
+    }`, { teamId }, (data) => data.workflowStates);
+  }
+
+  // Include closed and archived issues so creation can also check previous decisions.
+  async scopedIssues(teamId: string, projectId?: string): Promise<Issue[]> {
+    return this.pages(`query LinearCreatorIssues($filter: IssueFilter!, $after: String) {
+      issues(first: 100, after: $after, includeArchived: true, filter: $filter) {
+        nodes { ${ISSUE_FIELDS} } pageInfo { hasNextPage endCursor }
+      }
+    }`, { filter: { team: { id: { eq: teamId } }, ...(projectId ? { project: { id: { eq: projectId } } } : {}) } }, (data) => data.issues);
+  }
+
+  async createIssue(input: { id: string; teamId: string; projectId?: string; stateId: string; title: string; description: string; priority: number }): Promise<Issue> {
+    const data = await this.request(`mutation LinearCreatorCreate($input: IssueCreateInput!) {
+      issueCreate(input: $input) { success issue { ${ISSUE_FIELDS} } }
+    }`, { input }, true);
+    if (!data.issueCreate?.success || data.issueCreate.issue?.id !== input.id) throw new Error("Linear did not confirm issueCreate with the saved ID");
+    return data.issueCreate.issue;
+  }
+
+  async relations(id: string): Promise<IssueRelation[]> {
+    return this.pages(`query LinearCreatorRelations($id: String!, $after: String) {
+      issue(id: $id) { relations(first: 100, after: $after) { nodes { ${RELATION_FIELDS} } pageInfo { hasNextPage endCursor } } }
+    }`, { id }, (data) => data.issue.relations);
+  }
+
+  async createRelation(id: string, issueId: string, relatedIssueId: string): Promise<IssueRelation> {
+    const data = await this.request(`mutation LinearCreatorRelation($input: IssueRelationCreateInput!) {
+      issueRelationCreate(input: $input) { success issueRelation { ${RELATION_FIELDS} } }
+    }`, { input: { id, type: "blocks", issueId, relatedIssueId } }, true);
+    if (!data.issueRelationCreate?.success) throw new Error("Linear did not confirm issueRelationCreate");
+    return data.issueRelationCreate.issueRelation;
   }
 
   async comments(id: string): Promise<{ id: string; body: string; url: string }[]> {

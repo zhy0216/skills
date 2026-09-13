@@ -11,6 +11,8 @@ description: 以资深产品经理视角探索当前 repo 的功能缺口，并�
 
 ## 输入与两种模式
 
+由 `linear-watch.ts --mode create` 派发且 context 的 `role` 为 `creator` 时，使用 [Creator 自动化交接](../references/creation.md)：复用本 skill 的探索、证据、去重和优先级规则，只输出结构化候选，由 watcher 统一创建、补依赖和核验。其余调用仍按下述流程直接提交。
+
 `args` 是可选的产品方向或需求 prompt，也可以来自当前对话；用户最新的明确指令优先。Team、Project、数量等提交偏好不算产品方向。
 
 - **没有 prompt**：系统探索整个 repo，理解产品全貌并发现功能缺口。不要因为没有 prompt 而要求用户先提供需求。

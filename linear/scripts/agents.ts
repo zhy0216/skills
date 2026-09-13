@@ -4,9 +4,9 @@ import { command } from "./linear-client";
 export const STAGES = ["analyze", "plan", "todos", "implement", "validate", "merge"] as const;
 export const MAX_ACTIVE_AGENTS = 8;
 export type Stage = typeof STAGES[number];
-export const ROLES = ["orchestrator", "planner", "executor"] as const;
+export const ROLES = ["orchestrator", "planner", "executor", "creator"] as const;
 export type Role = typeof ROLES[number];
-export const STAGE_ROLES: Record<Stage, Exclude<Role, "orchestrator">> = {
+export const STAGE_ROLES: Record<Stage, Extract<Role, "planner" | "executor">> = {
   analyze: "planner", plan: "planner", todos: "planner",
   implement: "executor", validate: "executor", merge: "executor",
 };
@@ -146,7 +146,9 @@ export function resolveRoleAgents(config: AgentSettings): RoleAgents {
   }
   const defaults = overlay({ ...builtIn("codex"), model: config.model ?? null }, config.defaults ?? {});
   return Object.fromEntries(ROLES.map((role) => {
-    const agent = overlay(defaults, config.agents?.[role] ?? {});
+    // Creation defaults to Codex even when development roles use OpenCode.
+    const override = role === "creator" ? { agent: "codex" as const, ...config.agents?.creator } : config.agents?.[role] ?? {};
+    const agent = overlay(defaults, override);
     validateTransport(agent, `agents.${role}`);
     const name = (agent.agent === "codex" ? config.codexBin : config.opencodeBin) ?? agent.agent;
     return [role, { ...agent, extraArgs: [...agent.extraArgs], binary: Bun.which(name) ?? name }];
