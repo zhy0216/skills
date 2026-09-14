@@ -15,6 +15,8 @@ description: 以资深产品经理视角探索当前 repo 的功能缺口，并�
 
 `args` 是可选的产品方向或需求 prompt，也可以来自当前对话；用户最新的明确指令优先。Team、Project、数量等提交偏好不算产品方向。
 
+用户指定的仓库路径是探索目标；skill 所在目录和调度器的工作目录不能覆盖它。仓库与 Linear Project 分别解析。watcher 模式从 context 的 `repo` 和 `worktree` 读取代码；它们与用户指定仓库冲突时返回 blocked，由调度端修正 `routes[].repo` 和相关 `prompt` 后重新派发，不能继续为错误仓库提单。定时任务的配置核对见 [Creator 自动化交接](../references/creation.md#定时任务的仓库与投放目标)。
+
 - **没有 prompt**：系统探索整个 repo，理解产品全貌并发现功能缺口。不要因为没有 prompt 而要求用户先提供需求。
 - **有 prompt**：先将 prompt 转换为目标用户、待完成的任务、期望结果和范围，再沿该方向探索相关用户旅程、上下游能力及必要前置条件。读取全局上下文，但避免把无关方向塞进本次 issues。
 

@@ -33,7 +33,7 @@ scripts/config.opencode.example.json
 
 ## 配置并运行
 
-本机配置已放在 `scripts/config.json`，仓库为 `/home/ubuntu/skills`，Team 为 `EZT`。在其他机器使用前请调整这些值，也可以复制 `linear-watch.example.json` 创建其他配置，填写本地仓库和 Linear 范围。`repo` 和 `stateDir` 的相对路径以配置文件所在目录为基准，JSON 中不展开 `~`；CLI 可执行文件使用 PATH 中的名称或绝对路径。
+本机配置已放在 `scripts/config.json`，探索仓库为 `/home/ubuntu/workspace/eztodo`，Team 为 `EZT`。脚本安装在 `/home/ubuntu/skills`；实际探索目标取自 `routes[].repo`，不由脚本位置或调度器工作目录决定。在其他机器使用前请调整这些值，也可以复制 `linear-watch.example.json` 创建其他配置，填写本地仓库和 Linear 范围。`repo` 和 `stateDir` 的相对路径以配置文件所在目录为基准，JSON 中不展开 `~`；CLI 可执行文件使用 PATH 中的名称或绝对路径。
 
 同目录还有两个完整示例：[全部使用 Codex](../scripts/config.codex.example.json)、[全部使用 OpenCode](../scripts/config.opencode.example.json)。Codex 示例为三个开发角色分别设置 medium/high/xhigh，creator 使用 xhigh，并通过 `--ephemeral` 演示额外参数；OpenCode 示例使用内置 build agent，给各角色设置 session 标题。两者的 `model: null` 沿用各 CLI 的默认模型；OpenCode 的 `reasoningEffort: null` 沿用模型默认，指定深度时改为该模型支持的 variant。填写 repo 后可用 `--config scripts/config.codex.example.json --test` 或 `--config scripts/config.opencode.example.json --test` 选择单条试跑。
 
@@ -173,6 +173,8 @@ bun scripts/linear-watch.ts --mode create --uninstall
 未配置 `creation.schedule` 时，创建模式按系统时区每天 02:00 运行；本机配置覆盖为每四小时一次。修改通过 `--install` 安装的 cron 频率后，需要重新 `--install`；前台模式修改频率后重启进程。创建和开发使用独立 cron 标识与日志；旧命令和旧开发 cron 名称保持兼容。
 
 本机已使用 `~/.config/systemd/user/linear-creator.service` 和 `linear-creator.timer` 安装创建任务。timer 按系统时区 `America/Los_Angeles` 在 00、04、08、12、16、20 点调用 `--mode create --once`，同一 service 仍在运行时不会重入。已启用用户 linger，退出登录后 timer 仍运行；`Persistent=true` 会在重启后补触发错过的执行。运行仍需要配置对应的 Herdr session 可用。systemd 的频率由 timer 的 `OnCalendar` 控制，修改 JSON 不会更新 timer；修改 unit 后执行 `systemctl --user daemon-reload` 并重启 timer。同一配置使用此 timer 时，无需再运行 `--install` 注册 cron。
+
+service 的 `WorkingDirectory=/home/ubuntu/skills` 用于启动脚本；`ExecStart` 显式读取该目录的 `scripts/config.json`，其中 `routes[].repo` 才是探索仓库。调整仓库后同步检查 route 的 `prompt`，并用相同脚本和配置运行 `--mode create --dry-run` 核对；只修改 JSON 无需重装 timer，正在运行的旧扫描则需先结束。详见 [定时任务的仓库与投放目标](references/creation.md#定时任务的仓库与投放目标)。
 
 ```bash
 # 查看下次运行时间和创建日志。

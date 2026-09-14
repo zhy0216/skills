@@ -2,6 +2,12 @@
 
 `linear-watch.ts --mode create` 按仓库 route 运行，`agents.creator` 默认使用 Codex。watcher 负责查询、创建和读回 Linear；creator 负责按照 make-linear-issue 的产品判断规则探索、去重并生成候选。
 
+## 定时任务的仓库与投放目标
+
+定时任务探索哪个仓库由实际配置的 `routes[].repo` 决定。脚本 / skill 安装目录、systemd 的 `WorkingDirectory` 和启动终端的 cwd 都不能替代这个字段。排查或调整定时任务时，先从 cron 命令或 service 的 `ExecStart` 确定脚本与 `--config` 路径；未传 `--config` 时，按 `LINEAR_WATCH_CONFIG`、脚本同目录的 `config.json` 依次解析。
+
+将 `repo` 设置为用户指定仓库，并检查 `prompt` 是否仍在要求探索旧仓库；Team 与 Linear Project 按各自的明确映射设置。用该定时任务的脚本和配置运行 `--mode create --dry-run`，核对输出的实际 `repo`、`target` 和 `prompt` 后再恢复调度。修改配置只影响后续读取；正在运行的扫描保留旧 context，需要先结束旧扫描，避免它继续发布错误仓库的候选。
+
 ## Creator 的输入与输出
 
 先读取 `LINEAR_WATCH_CONTEXT` 指向的 context。`target` 是脚本已验证的 Team、可选 Project 和 Backlog 状态；`snapshotPath` 是该范围全部分页的 issue 快照，包含已完成、取消和归档项。预检按非归档的 `unstarted` / `started` 统计在制需求，超过 100 时脚本不会启动 creator。`prompt: null` 表示全仓探索；有 prompt 时只提交对应方向。`maxCandidates: null` 表示没有数量上限，数字表示本轮可提交的最大候选数，必要前置项也占用额度。
