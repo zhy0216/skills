@@ -1,6 +1,6 @@
 # Agent 分发规则
 
-`auto-dev`、`make-plan`、`plan-to-todo` 和 `herdr-finish-plan` 共用本规则。这里只定义选择、传递和启动参数；读取本文件不代表调用执行 skill。
+`auto-dev`、`make-plan`、`plan-to-todo`、`herdr-finish-plan` 和 `herdr-finish-todo` 共用本规则。这里只定义选择、传递和启动参数；读取本文件不代表调用执行 skill。
 
 ## 选择 agent
 
@@ -27,7 +27,7 @@
 - 初次拆队列时，本次全局指定优先于方案保存的执行偏好，最后才跟随当前宿主。重拆已有队列时保留未被用户更改的执行偏好，并按任务含义迁移原有单任务指定，不能因改了序号而丢失或错配。
 - 每个 todo 开头写 `difficulty: easy|medium|hard|extreme` 和 `agent: inherit|codex|opencode`，均为独立的元数据行。只有单任务指定才写具体 agent；不要把默认分配固化到所有 todo。
 - `auto-dev` 把同一默认值与单任务指定传给规划和拆分阶段；新协调器和手动续跑都读取已保存的队列配置，不因换了宿主而丢失原选择。
-- `herdr-finish-plan` 直接调用时仍支持旧队列：无保存值则跟随当前宿主。本次覆盖只影响尚未启动的任务；已在运行的任务不因收到新默认值而自动重启。
+- `herdr-finish-plan` / `herdr-finish-todo` 直接调用时仍支持旧队列：无保存值则跟随当前宿主。本次覆盖只影响尚未启动的任务；已在运行的任务不因收到新默认值而自动重启。
 
 ## 模型与推理强度
 
