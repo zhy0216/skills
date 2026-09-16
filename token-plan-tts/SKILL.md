@@ -41,6 +41,14 @@ EOF
 
 3. 向用户展示生成的音频文件路径。
 
+## 音色
+
+`qwen-audio-3.0-tts-plus` 系统音色只有 `longanlingxin`（女）、`longanlufeng`（男）；另有 500+ 基础音色，命名格式 `qwen-audio-3.0-tts-plus-<后缀>`，可按性别、年龄、特质挑选。完整列表（含试听文件名）见：
+
+https://platform.qianwenai.com/docs/developer-guides/speech/voice-list/qwen-audio-tts
+
+音色与模型绑定：voice 不属于当前 model 支持范围时报 `[cosyvoice:]Engine error [411]: TTS speak operation failed`，换成列表内的音色即可。
+
 ## 采样率
 
 `AudioFormat` 常量名决定采样率与码率（如 `MP3_22050HZ_MONO_256KBPS`、`MP3_24000HZ_MONO_256KBPS`）。需要非默认采样率时换对应常量即可，不必额外传参。
