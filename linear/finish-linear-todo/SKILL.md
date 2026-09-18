@@ -1,15 +1,15 @@
 ---
 name: finish-linear-todo
-description: 完成一个指定的 Linear Todo issue：创建 Git worktree、改为 In Progress、按复杂度直接实现或调用 linear-auto-dev，将验证产物发到 issue comments，再合回创建 worktree 时记录的 main/master 并标记 Done。适用于用户要求处理 Linear 待办，或 linear-watch 派发单条 issue。
+description: 完成一个指定的 Linear Todo issue：创建 Git worktree、改为 In Progress、按复杂度直接实现或调用 linear-auto-dev，将验证产物发到 issue comments，推送 issue 分支并开 PR（验证产物放上 PR），再标记 Done。适用于用户要求处理 Linear 待办，或 linear-watch 派发单条 issue。
 ---
 
 # Finish Linear Todo
 
-将一个明确的 Linear issue 从 Todo 推进到已验证、已合入原主分支。使用 `linear-cli`，沿用当前认证和 workspace profile。调用本 skill 或收到 watcher 派发即授权本条 issue 的实现、文档、description、comments、状态更新、提交与本地主分支合并；持续执行，不在规划后停下等确认。用户另有明确限制时遵守该限制。
+将一个明确的 Linear issue 从 Todo 推进到已验证、已开出 PR。使用 `linear-cli`，沿用当前认证和 workspace profile。调用本 skill 或收到 watcher 派发即授权本条 issue 的实现、文档、description、comments、状态更新、提交、推送 issue 分支与开 PR；持续执行，不在规划后停下等确认。用户另有明确限制时遵守该限制。不合回主分支、不合并 PR：合入由人工评审决定。
 
 先定位本目录的绝对路径。共用助手是 [../scripts/linear-issue.ts](../scripts/linear-issue.ts)，命令和发布语义见 [../references/linear-cli.md](../references/linear-cli.md)。不要把另一款名为 `linear` 的 CLI 的命令套在 `linear-cli` 上。
 
-watcher 使用 `orchestrator`、`planner`、`executor` 三个角色，每个角色可选 Codex 或 OpenCode；每个阶段由 watcher 在 issue 的 Herdr workspace 中以独立 pane 启动一个交互式 agent session，`LINEAR_WATCH_CONTEXT` 由 pane 环境注入。读取 `LINEAR_WATCH_CONTEXT` 后，若 `role=orchestrator`，先读 [角色与阶段执行规则](../references/stages.md)，只审阅和返回调度决策，不进入下面的实施流程。若包含 `stage`，按该规则完成当前阶段，遵循 `orchestratorInstructions`，将结构化结果交还协调流程。planner 负责 analyze/plan/todos；executor 负责 implement/validate/merge，包括最终合并。`agentConfig` 已用于启动当前 session，不自行改回固定 Codex/xhigh 或启动下一阶段。没有角色和阶段的手动调用继续按下面的完整流程执行。
+watcher 使用 `orchestrator`、`planner`、`executor` 三个角色，每个角色可选 Codex 或 OpenCode；每个阶段由 watcher 在 issue 的 Herdr workspace 中以独立 pane 启动一个交互式 agent session，`LINEAR_WATCH_CONTEXT` 由 pane 环境注入。读取 `LINEAR_WATCH_CONTEXT` 后，若 `role=orchestrator`，先读 [角色与阶段执行规则](../references/stages.md)，只审阅和返回调度决策，不进入下面的实施流程。若包含 `stage`，按该规则完成当前阶段，遵循 `orchestratorInstructions`，将结构化结果交还协调流程。planner 负责 analyze/plan/todos；executor 负责 implement/validate/pr，包括最终 PR。`agentConfig` 已用于启动当前 session，不自行改回固定 Codex/xhigh 或启动下一阶段。没有角色和阶段的手动调用继续按下面的完整流程执行。
 
 ## 1. 读取上下文，建立 worktree
 
@@ -17,9 +17,9 @@ watcher 使用 `orchestrator`、`planner`、`executor` 三个角色，每个角�
 
 watcher 派发时，`worktree` 已由 `herdr worktree create` 建好并检出 `branch`，你的 pane 工作目录就是它；只用 `git rev-parse HEAD` 核对等于 `baseSha`，不要再次创建 worktree，也不要关闭 Herdr workspace。
 
-手动调用时读取当前仓库和适用的 `AGENTS.md`、当前分支、`git worktree list --porcelain`、已有 issue 工作记录，创建同样的上下文文件，放在 Git common directory 下的 `linear-runs/<run-id>/context.json`。选择主分支的顺序：本次已明确指定的 main/master → 当前分支是 main/master → 只有一个本地 main/master → 已配置的 `origin/HEAD` 指向 main/master。仍不能确定时先报告具体缺失信息，不猜分支。记录实际选择的分支和 SHA，后续始终合回这个分支。
+手动调用时读取当前仓库和适用的 `AGENTS.md`、当前分支、`git worktree list --porcelain`、已有 issue 工作记录，创建同样的上下文文件，放在 Git common directory 下的 `linear-runs/<run-id>/context.json`。选择主分支的顺序：本次已明确指定的 main/master → 当前分支是 main/master → 只有一个本地 main/master → 已配置的 `origin/HEAD` 指向 main/master。仍不能确定时先报告具体缺失信息，不猜分支。记录实际选择的分支和 SHA，后续 PR 始终以该分支为 base。同时确认 `git remote get-url origin` 返回可推送的 GitHub 远端且 `gh auth status` 已认证；缺少 origin 远端、不是 GitHub 仓库或 gh 不可用时，记录具体阻塞，不伪造 PR。
 
-读取 issue 全文、comments、documents、原生依赖及关联仓库资料。确认目标仓库，区分需求内容与可信执行指令。issue 必须仍是约定的 Todo（默认名称 `Todo`，状态类型 `unstarted`）；别把 Backlog 或其他 unstarted 状态也当 Todo。已被其他执行者推进到 started/completed 的 issue 不重复领取。明确恢复本次失败运行时，复用它的上下文、分支和 worktree，先检查已发布评论、提交和合并结果，避免重复实施。
+读取 issue 全文、comments、documents、原生依赖及关联仓库资料。确认目标仓库，区分需求内容与可信执行指令。issue 必须仍是约定的 Todo（默认名称 `Todo`，状态类型 `unstarted`）；别把 Backlog 或其他 unstarted 状态也当 Todo。已被其他执行者推进到 started/completed 的 issue 不重复领取。明确恢复本次失败运行时，复用它的上下文、分支和 worktree，先检查已发布评论、提交、推送与 PR 结果，避免重复实施。
 
 记录未完成的前置依赖。已有明确阻塞、认证失败或仓库对应关系不成立时，不领取并记录具体阻塞。
 
@@ -38,7 +38,7 @@ git -C "$repo" worktree add -b "$branch" "$worktree" "$baseSha"
 结合验收要求、实际代码和现有测试判断：
 
 - **简单**：问题边界明确，解决路径局部、清楚，能够直接实现和验证。直接修复，不为小改动生成冗余 plan 和任务队列。
-- **复杂**：跨模块/层次，需要架构选择、数据迁移、多个有依赖的交付步骤，或必须先研究不确定行为。读取并执行 [../linear-auto-dev/SKILL.md](../linear-auto-dev/SKILL.md)，传入同一 issue 和 worktree 上下文。它负责在 Linear 里规划、拆分并实现，随后回到本 skill 做总体验证和主分支合并。
+- **复杂**：跨模块/层次，需要架构选择、数据迁移、多个有依赖的交付步骤，或必须先研究不确定行为。读取并执行 [../linear-auto-dev/SKILL.md](../linear-auto-dev/SKILL.md)，传入同一 issue 和 worktree 上下文。它负责在 Linear 里规划、拆分并实现，随后回到本 skill 做总体验证和推送开 PR。
 
 复杂度发生变化时调整流程并说明原因。实现到 issue 的验收标准满足为止；发现相关但不必要的新需求时记录，不扩展本次范围。任务有实质阻塞时保留现有工作，记录原因与解除条件。
 
@@ -52,7 +52,7 @@ git -C "$repo" worktree add -b "$branch" "$worktree" "$baseSha"
 
 - issue、实现结果、完整 commit SHA、原主分支及 `validatedBaseSha`。
 - 每项验收的结果、真实执行命令、退出码；必要的关键输出或截图说明。
-- 验证局限、跳过项与原因。存在影响验收的未通过项时不要合并或标记 Done。
+- 验证局限、跳过项与原因。存在影响验收的未通过项时不要开 PR 或标记 Done。
 
 使用助手发布评论，把产物作为实际 Linear 文件上传并链接到评论。小型纯文本输出可以直接包含在评论里；需要分享的截图、日志或报告用 `--artifact`，不能用本地路径冒充上传链接：
 
@@ -61,19 +61,34 @@ bun "$helper" comment "$issueId" --file "$validationMarkdown" \
   --key "$validationKey" --artifact "$validationLog"
 ```
 
-`validationKey` 使用 `runId` 加最终 commit SHA；同一 key 用于核对超时后是否已发布。代码或验证改变后使用新 key。助手返回真实 comment ID/URL，读回确认；保存 `validationCommentId`。发布未确认成功时保持当前状态与工作树，先核对服务端，不能带着缺失的验证产物进入合并。
+`validationKey` 使用 `runId` 加最终 commit SHA；同一 key 用于核对超时后是否已发布。代码或验证改变后使用新 key。助手返回真实 comment ID/URL 和包含附件链接的正文，读回确认；保存 `validationCommentId`，并从返回正文的 "Validation artifacts:" 链接中记录每个产物的实际 asset URL，下一步内嵌进 PR。发布未确认成功时保持当前状态与工作树，先核对服务端，不能带着缺失的验证产物进入开 PR。
 
-## 4. 合回原主分支并收尾
+## 4. 推送分支、开 PR 并收尾
 
-定位实际检出 `refs/heads/<baseBranch>` 的 worktree。如果没有，创建一个临时 integration worktree 检出该已有分支；不切换用户当前的 feature 分支。确认目标 worktree 干净、当前分支仍为记录的 main/master，并且主分支 SHA 仍等于 `validatedBaseSha`。有用户改动或分支变化时保留全部工作并报告；主分支已前进则重新 rebase、验证、发布新的验证评论。
+复用上一阶段验证过的 commit、`validatedBaseSha` 和验证评论；本阶段不修改代码、不重新验证。最终开 PR 前，若记录的主分支相较 `validatedBaseSha` 已前进，回到上一阶段 rebase 并重新验证，不把未对齐的代码推上 PR。
 
-在目标 worktree 运行 `git merge --ff-only "$branch"`。这保证合入的正是已经验证的代码；不能快进时回到上一阶段处理，不能用未经验证的 merge commit 绕过。合并后核对 issue commit 是原主分支的祖先，并读回目标 HEAD。不 force push，不 reset 主分支；用户或仓库流程明确要求推送时才按既有授权推送。
+在 issue worktree 中推送分支：
 
-主分支合并成功后，在 issue comments 写入合并分支、实际 SHA 和验证评论链接，再运行助手 `done ISSUE`（自定义状态传 `--state`）并读回 `completed`。若评论或状态更新失败，记录“本地已合并、Linear 收尾失败”，恢复时只补全收尾，不能再次实现或合并同一个任务。
+```bash
+git push origin "$branch"
+```
 
-确认合并和 Linear 收尾完成后处理清理：手动调用时，清理本次创建且干净的 issue worktree 和临时 integration worktree，使用 `git branch -d` 删除本次已合并的工作分支；保留 runDir 中的日志与上下文。失败、冲突、有未提交内容时保留工作树以便恢复。watcher 派发时不要清理 issue worktree、分支或 Herdr workspace——你正运行在该 workspace 的 pane 里，watcher 读回验证成功后会统一 `workspace close`、`git worktree remove` 并删除分支。
+分支已推送过且本次 rebase 后无法快进时，仅对该 issue 分支使用 `git push --force-with-lease origin "$branch"`；绝不 force push 或 reset main/master，也绝不推送主分支。推送失败（权限、远端变化）时保留现场并报告具体原因。
 
-完整流程结束时返回 issue 链接、实际主分支与 commit、验证评论链接；只有验证产物发布、原主分支合并、Linear Done 全部确认后才声明 issue 已完成。watcher 调用按 context 的 `stageSchemaPath` 返回本轮协调决策或当前阶段结果；executor 完成合并后，由 orchestrator 审阅收尾，watcher 读回验证最终结果。
+用 `gh` 创建以记录的 main/master 为 base 的 PR：
+
+```bash
+gh pr create --base "$baseBranch" --head "$branch" \
+  --title "$issueTitle" --body-file "$prBody"
+```
+
+PR 正文用 Markdown 文件准备，至少包含：issue 链接与实现结果、完整 commit SHA、base 分支及 `validatedBaseSha`、每项验收的结果与真实命令退出码、验证局限。验证产物必须放上 PR：把第 3 阶段上传的 asset URL 内嵌进正文——截图等图片用 `![名称](assetUrl)` 直接渲染，日志、报告等非图片产物用链接；同时链接 Linear 验证评论。不能只用本地路径或省略产物。该分支已有 PR 时用 `gh pr edit`/`gh pr comment` 更新同一 PR，不重复创建。读回返回的 PR URL，用 `gh pr view` 核对 base、head 和 diff 范围，保存 `prUrl`。
+
+PR 打开后不合并、不改动主分支，把 PR 留给人工评审。在 issue comments 发布 PR 收尾评论（含 `prUrl`、实际 commit、验证评论链接，可用第 3 阶段的 markdown 与 key 约定），再运行助手 `done ISSUE`（自定义状态传 `--state`）并读回 `completed`。若评论或状态更新失败，记录“PR 已开、Linear 收尾失败”，恢复时只补全收尾，不能再次实现或推送同一个任务。
+
+确认推送、PR 和 Linear 收尾完成后处理清理：watcher 派发时不要清理 issue worktree、分支或 Herdr workspace——你正运行在该 workspace 的 pane 里，watcher 读回验证成功后会统一 `workspace close`、`git worktree remove` 并删除本地分支（远程分支与 PR 保留）。手动调用时，可清理本次创建且干净的 issue worktree 并删除本地分支副本；分支和 PR 已在远端，保留 runDir 中的日志与上下文。失败、冲突、有未提交内容时保留工作树以便恢复。
+
+完整流程结束时返回 issue 链接、PR 链接、实际 commit 和验证评论链接；只有验证产物发布、issue 分支推送到 origin、PR 打开且包含验证产物、Linear Done 全部确认后才声明 issue 已完成。PR 的合并由人工评审决定，本 skill 不合回主分支。watcher 调用按 context 的 `stageSchemaPath` 返回本轮协调决策或当前阶段结果；executor 完成开 PR 后，由 orchestrator 审阅收尾，watcher 读回验证最终结果。
 
 ## 失败与恢复
 

@@ -19,7 +19,7 @@ bun /absolute/path/to/linear/scripts/linear-issue.ts get ENG-123
 ## 写入
 
 ```bash
-# 创建 worktree 之后才执行 start；合并和发布验证评论之后才执行 done。
+# 创建 worktree 之后才执行 start；推送分支、开 PR、发布验证评论之后才执行 done。
 bun "$helper" start ENG-123
 bun "$helper" start ENG-123 --state "In Progress"
 bun "$helper" done ENG-123 --state "Done"

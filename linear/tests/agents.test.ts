@@ -77,18 +77,18 @@ describe("agent configuration", () => {
       { defaults: { agent: "opencode", extraArgs: ["--dir", "/tmp"] } },
       { defaults: { agent: "opencode", extraArgs: ["--variant=high"] } },
       { defaults: { extraArgs: ["--"] } }, { defaults: { reasoning: "high" } },
-      { stages: { merge: { agent: "opencode" } } }, { agents: { merge: {} } },
+      { stages: { pr: { agent: "opencode" } } }, { agents: { pr: {} } },
     ];
     for (const settings of invalid) expect(() => resolveRoleAgents(settings as AgentSettings)).toThrow();
   });
 
   test("rejects a wrong issue/stage or incomplete structured result", () => {
-    const result = { issueId: "issue", stage: "analyze", outcome: "completed", complexity: "simple", commit: null, validatedBaseSha: null, validationCommentId: null, planDocumentId: null, planUrl: null, summary: "Analyzed" };
+    const result = { issueId: "issue", stage: "analyze", outcome: "completed", complexity: "simple", commit: null, validatedBaseSha: null, validationCommentId: null, prUrl: null, planDocumentId: null, planUrl: null, summary: "Analyzed" };
     expect(parseStageResult(result, "analyze", "issue").complexity).toBe("simple");
     expect(() => parseStageResult(result, "plan", "issue")).toThrow("does not match");
     expect(() => parseStageResult(result, "analyze", "other")).toThrow("does not match");
     expect(() => parseStageResult({ ...result, commit: undefined }, "analyze", "issue")).toThrow("commit");
-    expect(() => parseStageResult({ ...result, outcome: "needs_validation" }, "analyze", "issue")).toThrow("Only merge");
+    expect(() => parseStageResult({ ...result, outcome: "needs_validation" }, "analyze", "issue")).toThrow("Only pr");
     expect(() => parseStageResult({ ...result, outcome: "blocked", summary: "Missing dependency" }, "analyze", "issue")).toThrow("Missing dependency");
   });
 
@@ -96,9 +96,9 @@ describe("agent configuration", () => {
     const decision = { issueId: "issue", outcome: "dispatch", nextStage: "plan", instructions: "Resolve the design uncertainty", summary: "Planning required" };
     expect(parseOrchestratorResult(decision, "issue", ["plan"], false).nextStage).toBe("plan");
     expect(() => parseOrchestratorResult(decision, "other", ["plan"], false)).toThrow("dispatched issue");
-    expect(() => parseOrchestratorResult({ ...decision, nextStage: "merge" }, "issue", ["plan"], false)).toThrow("cannot dispatch");
+    expect(() => parseOrchestratorResult({ ...decision, nextStage: "pr" }, "issue", ["plan"], false)).toThrow("cannot dispatch");
     const done = { ...decision, outcome: "completed", nextStage: null };
-    expect(() => parseOrchestratorResult(done, "issue", ["plan"], false)).toThrow("before a verified merge");
+    expect(() => parseOrchestratorResult(done, "issue", ["plan"], false)).toThrow("before a verified pull request");
     expect(parseOrchestratorResult(done, "issue", [], true).outcome).toBe("completed");
     expect(() => parseOrchestratorResult({ ...decision, outcome: "blocked" }, "issue", ["plan"], false)).toThrow("nextStage=null");
   });

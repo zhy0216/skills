@@ -40,7 +40,7 @@ export type Runtime = Config & {
   linearBin: string; codexBin: string; opencodeBin: string; stateDir: string; timeoutMinutes: number;
   maxActiveAgents: number; herdrSocket: string; herdr: Herdr; roleAgents: RoleAgents;
 };
-type Result = { issueId: string; outcome: "completed" | "blocked" | "failed"; baseBranch: string; commit: string | null; validationCommentId: string | null; summary: string };
+type Result = { issueId: string; outcome: "completed" | "blocked" | "failed"; baseBranch: string; commit: string | null; prUrl: string | null; validationCommentId: string | null; summary: string };
 
 export async function loadConfig(path: string, overrides: Pick<Config, "linearBin" | "codexBin" | "opencodeBin"> = {}): Promise<Runtime> {
   const config: Config = { ...await Bun.file(path).json(), ...overrides };
@@ -98,16 +98,20 @@ export function matchesRoute(issue: Issue, route: Route) {
     && (!route.project || !!issue.project && [issue.project.id, issue.project.name].some((value) => equal(value, route.project!)));
 }
 
-export async function verifyCompletion(client: LinearClient, issue: Issue, repo: string, base: string, result: Result) {
+export async function verifyCompletion(client: LinearClient, issue: Issue, repo: string, base: string, branch: string, result: Result) {
   if (!result || result.issueId !== issue.id || result.baseBranch !== base) throw new Error("Agent result does not match the dispatched issue and base branch");
   if (result.outcome !== "completed") throw new Error(`Agent reported ${result.outcome}: ${result.summary}`);
   if (!result.commit || !/^[0-9a-f]{40,64}$/.test(result.commit) || !result.validationCommentId) throw new Error("Completed result is missing a commit or validation comment");
-  try { await git(repo, "merge-base", "--is-ancestor", result.commit, `refs/heads/${base}`); }
-  catch { throw new Error(`Reported commit ${result.commit} is not merged into ${base}`); }
+  if (!result.prUrl || !/^https?:\/\/\S+\/pull\/\d+$/.test(result.prUrl)) throw new Error("Completed result is missing a pull request URL");
+  let remote = "";
+  try { remote = await git(repo, "ls-remote", "origin", `refs/heads/${branch}`); }
+  catch { throw new Error(`Could not read origin for ${repo}; the issue branch must be pushed for the pull request`); }
+  if (remote.trim().split("\t")[0] !== result.commit) throw new Error(`Reported commit ${result.commit} was not pushed to origin/${branch}`);
   const saved = await client.issue(issue.id);
   if (saved.state.type !== "completed") throw new Error("Agent exited successfully but the Linear issue is not completed");
   const comment = (await client.comments(issue.id)).find((comment) => comment.id === result.validationCommentId);
-  if (!comment?.body?.includes(result.commit)) throw new Error("Validation comment was not found on the issue or does not identify the merged commit");
+  if (!comment?.body?.includes(result.commit)) throw new Error("Validation comment was not found on the issue or does not identify the verified commit");
+  if (!(await client.comments(issue.id)).some((comment) => comment.body.includes(result.prUrl!))) throw new Error("Pull request link was not posted to the issue");
 }
 
 export async function runOnce(config: Runtime, options: { mode?: Mode; dryRun?: boolean; signal?: AbortSignal; singleIssue?: boolean } = {}) {
@@ -180,18 +184,19 @@ export async function runOnce(config: Runtime, options: { mode?: Mode; dryRun?: 
         },
       });
       await Bun.write(join(runDir, "result.json"), JSON.stringify(result, null, 2));
-      await verifyCompletion(client, fresh, repo, baseBranch, result);
+      await verifyCompletion(client, fresh, repo, baseBranch, context.branch, result);
       await Bun.write(join(runDir, "verified.json"), JSON.stringify({ ...result, verifiedAt: new Date().toISOString() }, null, 2));
       try {
         await closeHerdrWorkspace(config.herdr, context.workspaceId);
         await git(repo, "worktree", "remove", context.worktree);
-        await git(repo, "branch", "-d", context.branch);
+        // The pushed branch and its open pull request stay on the remote for human review.
+        await git(repo, "branch", "-D", context.branch);
         log("worktree-cleaned", { issue: fresh.identifier, worktree: context.worktree, branch: context.branch });
       } catch (error: any) {
         log("cleanup-failed", { issue: fresh.identifier, workspaceId: context.workspaceId, worktree: context.worktree, branch: context.branch, error: error.message });
       }
       summary.completed++;
-      log("completed", { issue: fresh.identifier, commit: result.commit, validationCommentId: result.validationCommentId, runDir });
+      log("completed", { issue: fresh.identifier, commit: result.commit, prUrl: result.prUrl, validationCommentId: result.validationCommentId, runDir });
     } catch (error: any) {
       if (error instanceof AgentCleanupError) preserveLocks = true;
       summary.failed++;
@@ -244,7 +249,7 @@ Run options:
   --install registers an OS cron job; --uninstall removes it. Each mode has its own job name.
 Agents:
   defaults and agents.{orchestrator,planner,executor,creator} support agent, model, reasoningEffort and extraArgs.
-  Planner owns analyze/plan/todos; executor owns implement/validate/merge; orchestrator directs development.
+  Planner owns analyze/plan/todos; executor owns implement/validate/pr; orchestrator directs development.
   Creator generates candidates; the script publishes Backlog issues and verifies their priority and dependencies.
   All agents run in Herdr worktree workspaces and dedicated panes. herdrBin/herdrSocket select the session.
   Socket default: HERDR_SOCKET_PATH or ${DEFAULT_HERDR_SOCKET}.

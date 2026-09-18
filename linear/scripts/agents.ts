@@ -1,14 +1,14 @@
 import { dirname, join } from "node:path";
 import { command } from "./linear-client";
 
-export const STAGES = ["analyze", "plan", "todos", "implement", "validate", "merge"] as const;
+export const STAGES = ["analyze", "plan", "todos", "implement", "validate", "pr"] as const;
 export const MAX_ACTIVE_AGENTS = 8;
 export type Stage = typeof STAGES[number];
 export const ROLES = ["orchestrator", "planner", "executor", "creator"] as const;
 export type Role = typeof ROLES[number];
 export const STAGE_ROLES: Record<Stage, Extract<Role, "planner" | "executor">> = {
   analyze: "planner", plan: "planner", todos: "planner",
-  implement: "executor", validate: "executor", merge: "executor",
+  implement: "executor", validate: "executor", pr: "executor",
 };
 export type AgentKind = "codex" | "opencode";
 export type AgentConfig = {

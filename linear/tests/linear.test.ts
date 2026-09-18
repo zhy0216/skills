@@ -51,10 +51,17 @@ async function setup(issues = [makeIssue()], extra: Record<string, unknown> = {}
 
 async function initRepo(root: string, branch: "main" | "master" = "main") {
   const repo = join(root, "repo"); mkdirSync(repo);
+  const origin = join(root, "origin.git"); mkdirSync(origin);
+  await git(origin, "init", "--bare", "-b", branch);
   await git(repo, "init", "-b", branch);
   await git(repo, "config", "user.name", "Linear test"); await git(repo, "config", "user.email", "linear-test@example.invalid");
   await Bun.write(join(repo, "base.txt"), "base\n"); await git(repo, "add", "base.txt"); await git(repo, "commit", "-m", "initial");
+  await git(repo, "remote", "add", "origin", origin);
   return repo;
+}
+
+async function remoteHead(repo: string, branch: string) {
+  return (await git(repo, "ls-remote", "origin", `refs/heads/${branch}`)).split("\t")[0];
 }
 
 function runPath(root: string) {
@@ -225,7 +232,7 @@ describe("watcher and Git integration", () => {
   }, 10_000);
 
   for (const base of ["main", "master"] as const) {
-    test(`dispatches YOLO/xhigh, publishes validation, and verifies a real merge into ${base}`, async () => {
+    test(`dispatches YOLO/xhigh, publishes validation, and verifies a real pull request into ${base}`, async () => {
       const s = await setup(); const repo = await initRepo(s.root, base);
       const result = await runOnce(await s.config());
       expect(result).toEqual({ completed: 1, failed: 0, skipped: 0, planned: 0 });
@@ -236,9 +243,13 @@ describe("watcher and Git integration", () => {
       expect(invocation.prompt).toContain("$finish-linear-todo");
       expect(invocation.context.baseBranch).toBe(base);
       const verified = await Bun.file(join(run, "verified.json")).json();
-      expect(await git(repo, "rev-parse", base)).toBe(verified.commit);
+      expect(verified.prUrl).toMatch(/\/pull\/\d+$/);
+      expect(await remoteHead(repo, invocation.context.branch)).toBe(verified.commit);
+      // The local base branch is never merged or pushed by the PR flow.
+      expect(await git(repo, "rev-list", "--count", base)).toBe("1");
       expect((await s.state()).issues[0].state.type).toBe("completed");
       expect((await s.state()).comments[0].body).toContain(verified.commit);
+      expect((await s.state()).comments.some((comment: any) => comment.body.includes(verified.prUrl))).toBe(true);
       expect(existsSync(join(repo, ".git/linear-watch.lock"))).toBe(false);
       expect(existsSync(invocation.context.worktree)).toBe(false);
       expect(await git(repo, "branch", "--list", invocation.context.branch)).toBe("");
@@ -270,7 +281,7 @@ describe("watcher and Git integration", () => {
     const result = await runOnce(await s.config()); expect(result.failed).toBe(1); expect(result.completed).toBe(0);
   });
 
-  test("rejects a claimed completion when the issue branch was never merged", async () => {
+  test("rejects a claimed completion when the issue branch was never pushed", async () => {
     const s = await setup(undefined, { falseComplete: true }); const repo = await initRepo(s.root);
     const before = await git(repo, "rev-parse", "HEAD"); const result = await runOnce(await s.config());
     expect(result.failed).toBe(1); expect(result.completed).toBe(0); expect(await git(repo, "rev-parse", "HEAD")).toBe(before);
@@ -403,7 +414,7 @@ describe("role agent integration", () => {
     expect((await Bun.file(join(runPath(s.root), "failure.json")).json()).error).toContain("Upstream dependency");
   });
 
-  for (const invalid of ["orchestratorSkipToMerge", "orchestratorPrematureComplete"]) {
+  for (const invalid of ["orchestratorSkipToPr", "orchestratorPrematureComplete"]) {
     test(`rejects ${invalid} without running an executor or changing the issue`, async () => {
       const s = await setup(undefined, { [invalid]: true }); const repo = await initRepo(s.root);
       const before = await git(repo, "rev-parse", "HEAD");
@@ -428,7 +439,7 @@ describe("role agent integration", () => {
     });
     expect(await runOnce(config)).toEqual({ completed: 1, failed: 0, skipped: 0, planned: 0 });
     const calls = invocations(s.root);
-    expect(calls.map((run) => run.context.stage)).toEqual(["analyze", "plan", "todos", "implement", "validate", "merge"]);
+    expect(calls.map((run) => run.context.stage)).toEqual(["analyze", "plan", "todos", "implement", "validate", "pr"]);
     expect(calls.map((run) => run.context.role)).toEqual(["planner", "planner", "planner", "executor", "executor", "executor"]);
     expect(calls.map((run) => run.context.agentConfig.agent)).toEqual(["opencode", "opencode", "opencode", "codex", "codex", "codex"]);
     expect(calls.map((run) => run.args[run.args.indexOf("--model") + 1])).toEqual(["test/planner", "test/planner", "test/planner", "test-executor", "test-executor", "test-executor"]);
@@ -464,14 +475,14 @@ describe("role agent integration", () => {
     expect(state.documents[0].issueId).toBe(s.issues[0]!.id);
     expect(state.issues[0].description).toContain("Existing acceptance");
     expect(state.issues[0].description).toContain("- [x] T01");
-    expect(await git(repo, "rev-parse", "HEAD")).toBe(context.stageResults.validate.commit);
+    expect(await remoteHead(repo, context.branch)).toBe(context.stageResults.validate.commit);
   }, 15_000);
 
   test("simple issues skip plan/todos and use the planner only for analysis", async () => {
     const s = await setup(); await initRepo(s.root);
     const config = await s.config({ opencodeBin: join(s.root, "missing-opencode"), agents: { planner: { reasoningEffort: "high" } } });
     expect((await runOnce(config)).completed).toBe(1);
-    expect(invocations(s.root).map((run) => run.context.stage)).toEqual(["analyze", "implement", "validate", "merge"]);
+    expect(invocations(s.root).map((run) => run.context.stage)).toEqual(["analyze", "implement", "validate", "pr"]);
     expect(invocations(s.root).filter((run) => run.context.role === "planner")).toHaveLength(1);
     expect((await s.state()).documents).toHaveLength(0);
   }, 10_000);
@@ -489,14 +500,14 @@ describe("role agent integration", () => {
   }, 10_000);
 
   for (const stage of ["implement", "validate"] as const) {
-    test(`${stage} failure keeps the worktree and prevents a merge`, async () => {
+    test(`${stage} failure keeps the worktree and prevents a pull request`, async () => {
       const s = await setup(undefined, { failStage: stage }); const repo = await initRepo(s.root);
       const base = await git(repo, "rev-parse", "HEAD");
       const result = await runOnce(await s.config({ agents: { executor: { agent: "opencode" } } }));
       expect(result.failed).toBe(1); expect(result.completed).toBe(0);
       const calls = invocations(s.root);
       expect(calls.at(-1).context.stage).toBe(stage);
-      expect(calls.some((run) => run.context.stage === "merge")).toBe(false);
+      expect(calls.some((run) => run.context.stage === "pr")).toBe(false);
       expect(existsSync(calls[0].context.worktree)).toBe(true);
       expect((await s.state()).issues[0].state.type).toBe("started");
       expect(await git(repo, "rev-parse", "HEAD")).toBe(base);
@@ -518,7 +529,7 @@ describe("role agent integration", () => {
     expect((await s.state()).issues[0].description).toContain("- [ ] Existing acceptance");
   }, 10_000);
 
-  test("requires a real validation comment before starting merge", async () => {
+  test("requires a real validation comment before starting pr", async () => {
     const s = await setup(undefined, { missingValidationComment: true }); const repo = await initRepo(s.root);
     const before = await git(repo, "rev-parse", "HEAD");
     expect((await runOnce(await s.config())).failed).toBe(1);
@@ -527,8 +538,8 @@ describe("role agent integration", () => {
     expect((await s.state()).issues[0].state.type).toBe("started");
   }, 10_000);
 
-  for (const [timing, flag] of [["after validation", "advanceBaseOnce"], ["during merge", "advanceBaseAtMerge"], ["during orchestrator review", "advanceBaseDuringReview"]]) {
-    test(`base changes ${timing} return validation and merge to the executor`, async () => {
+  for (const [timing, flag] of [["after validation", "advanceBaseOnce"], ["during pr", "advanceBaseAtPr"], ["during orchestrator review", "advanceBaseDuringReview"]]) {
+    test(`base changes ${timing} return validation and pull request to the executor`, async () => {
       const s = await setup(undefined, { [flag!]: true }); const repo = await initRepo(s.root);
       const config = await s.config({
         agents: { orchestrator: { reasoningEffort: "low" }, executor: { agent: "opencode", model: "test/executor", reasoningEffort: "high" } },
@@ -538,10 +549,10 @@ describe("role agent integration", () => {
       const validations = calls.filter((run) => run.context.stage === "validate");
       expect(validations).toHaveLength(2);
       expect(validations.every((run) => run.context.agentConfig.agent === "opencode" && run.args.includes("test/executor") && run.args.includes("--variant"))).toBe(true);
-      const merges = calls.filter((run) => run.context.stage === "merge");
-      expect(merges).toHaveLength(flag === "advanceBaseAtMerge" ? 2 : 1);
-      expect(merges.every((run) => run.context.role === "executor" && run.args.includes("test/executor") && run.args.includes("--variant"))).toBe(true);
-      expect(merges.at(-1).context.previousResults.validate.commit).toBe(await git(repo, "rev-parse", "HEAD"));
+      const prs = calls.filter((run) => run.context.stage === "pr");
+      expect(prs).toHaveLength(flag === "advanceBaseAtPr" ? 2 : 1);
+      expect(prs.every((run) => run.context.role === "executor" && run.args.includes("test/executor") && run.args.includes("--variant"))).toBe(true);
+      expect(prs.at(-1).context.previousResults.validate.commit).toBe(await remoteHead(repo, prs.at(-1).context.branch));
       expect((await s.state()).comments).toHaveLength(3);
       expect(await Bun.file(join(repo, "advanced.txt")).exists()).toBe(true);
       const context = await Bun.file(join(runPath(s.root), "context.json")).json();
@@ -549,7 +560,7 @@ describe("role agent integration", () => {
     }, 15_000);
   }
 
-  test("rechecks the issue commit after orchestration before dispatching merge", async () => {
+  test("rechecks the issue commit after orchestration before dispatching pr", async () => {
     const s = await setup(undefined, { changeWorktreeDuringReview: true }); const repo = await initRepo(s.root);
     const before = await git(repo, "rev-parse", "HEAD");
     expect((await runOnce(await s.config())).failed).toBe(1);
@@ -564,25 +575,25 @@ describe("role agent integration", () => {
     expect(result.failed).toBe(1); expect(result.completed).toBe(0);
     const calls = invocations(s.root);
     expect(calls.filter((run) => run.context.stage === "validate")).toHaveLength(3);
-    expect(calls.some((run) => run.context.stage === "merge")).toBe(false);
+    expect(calls.some((run) => run.context.stage === "pr")).toBe(false);
     expect((await s.state()).issues[0].state.type).toBe("started");
     expect(existsSync(calls[0].context.worktree)).toBe(true);
     expect(existsSync(join(repo, "ENG-1.txt"))).toBe(false);
   }, 15_000);
 
-  test("orchestrator-requested rework invalidates the old validation before executor merges", async () => {
+  test("orchestrator-requested rework invalidates the old validation before executor opens the pull request", async () => {
     const s = await setup(undefined, { orchestratorReworkOnce: true }); const repo = await initRepo(s.root);
     const config = await s.config({ agents: { executor: { agent: "opencode", model: "test/executor" } } });
     expect((await runOnce(config)).completed).toBe(1);
     const calls = invocations(s.root);
-    expect(calls.map((run) => run.context.stage)).toEqual(["analyze", "implement", "validate", "implement", "validate", "merge"]);
+    expect(calls.map((run) => run.context.stage)).toEqual(["analyze", "implement", "validate", "implement", "validate", "pr"]);
     expect(calls[3].context.previousResults.validate).toBeUndefined();
     expect(calls[3].context.previousResults.implement).toBeUndefined();
     const context = await Bun.file(join(runPath(s.root), "context.json")).json();
     const validations = context.stageHistory.filter((item: any) => item.stage === "validate");
     expect(validations[0].result.commit).not.toBe(validations[1].result.commit);
-    expect(context.stageResults.merge.commit).toBe(validations[1].result.commit);
-    expect(await git(repo, "rev-parse", "HEAD")).toBe(validations[1].result.commit);
+    expect(context.stageResults.pr.commit).toBe(validations[1].result.commit);
+    expect(await remoteHead(repo, context.branch)).toBe(validations[1].result.commit);
     expect((await s.state()).comments).toHaveLength(3);
   }, 15_000);
 
@@ -591,7 +602,7 @@ describe("role agent integration", () => {
     const config = await s.config({ agents: { planner: { agent: "opencode" } } });
     expect((await runOnce(config)).completed).toBe(1);
     const calls = invocations(s.root);
-    expect(calls.map((run) => run.context.stage)).toEqual(["analyze", "plan", "todos", "implement", "plan", "todos", "implement", "validate", "merge"]);
+    expect(calls.map((run) => run.context.stage)).toEqual(["analyze", "plan", "todos", "implement", "plan", "todos", "implement", "validate", "pr"]);
     expect(calls[4].context.role).toBe("planner");
     expect(calls[4].context.previousResults.implement).toBeUndefined();
     const state = await s.state();

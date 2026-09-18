@@ -34,6 +34,6 @@
 
 默认状态根目录的 `create/pending/` 保存待发布 manifest 的路径，不随自定义日志目录变化；恢复需要保留该 manifest。成功后删除 pending 指针，保留运行证据。scope、Team 或 Backlog 状态与 manifest 不符时停止该 route；修正配置或检查原 manifest 后恢复，不自动迁移已有候选。
 
-创建进程对同一 Team 的发布持有本机锁；硬崩溃后与开发模式一样，先核对锁 owner 对应的 Herdr pane 已退出，再移除失效锁。creator 成功后清理分析 worktree；agent 失败或修改 worktree 时保留现场。创建后的恢复只依赖 manifest 和 Linear，不运行开发或合并阶段。失败事件包含已确认存在的 issue 映射；created/reused 统计本批已确认项，恢复后包含此前已创建的部分，不代表恢复过程重复执行了创建。
+创建进程对同一 Team 的发布持有本机锁；硬崩溃后与开发模式一样，先核对锁 owner 对应的 Herdr pane 已退出，再移除失效锁。creator 成功后清理分析 worktree；agent 失败或修改 worktree 时保留现场。创建后的恢复只依赖 manifest 和 Linear，不运行开发或开 PR 阶段。失败事件包含已确认存在的 issue 映射；created/reused 统计本批已确认项，恢复后包含此前已创建的部分，不代表恢复过程重复执行了创建。
 
 API 字段通过当前接口 introspection 核对：`IssueCreateInput.id` 与 `IssueRelationCreateInput.id` 均可指定，关系类型使用 `blocks`。参考 [Linear GraphQL](https://linear.app/developers/graphql) 和 [Issue relations](https://linear.app/docs/issue-relations)。

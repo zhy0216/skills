@@ -50,28 +50,28 @@ if (context.role === "creator") {
 if (context.role === "orchestrator") {
   let nextStage = context.suggestedStage;
   const last = context.stageHistory.at(-1);
-  if (initial.advanceBaseDuringReview && last?.stage === "validate" && last.attempt === 1 && nextStage === "merge") {
+  if (initial.advanceBaseDuringReview && last?.stage === "validate" && last.attempt === 1 && nextStage === "pr") {
     await Bun.write(join(context.repo, "advanced.txt"), "advanced during orchestrator review");
     git(context.repo, "add", "advanced.txt"); git(context.repo, "commit", "-m", "Advance base during review");
   }
-  if (initial.changeWorktreeDuringReview && nextStage === "merge") {
+  if (initial.changeWorktreeDuringReview && nextStage === "pr") {
     await Bun.write(join(context.worktree, "late.txt"), "unvalidated change");
     git(context.worktree, "add", "late.txt"); git(context.worktree, "commit", "-m", "Change worktree after validation");
   }
   if (initial.orchestratorReworkOnce && last?.stage === "validate" && !context.stageHistory.some((item: any) => item.stage === "implement" && item.attempt > 1)) nextStage = "implement";
   if (initial.orchestratorReplanOnce && last?.stage === "implement" && !context.stageHistory.some((item: any) => item.stage === "plan" && item.attempt > 1)) nextStage = "plan";
   if (initial.orchestratorLoop && context.previousResults.analyze) nextStage = "plan";
-  if (initial.orchestratorSkipToMerge) nextStage = "merge";
+  if (initial.orchestratorSkipToPr) nextStage = "pr";
   const decision = {
     issueId: context.issueId, outcome: initial.orchestratorBlock ? "blocked" : initial.orchestratorPrematureComplete || context.canComplete ? "completed" : "dispatch",
     nextStage: initial.orchestratorBlock || initial.orchestratorPrematureComplete || context.canComplete ? null : nextStage,
     instructions: `Coordinator instruction for ${nextStage}: satisfy the issue and preserve existing acceptance.`,
-    summary: initial.orchestratorBlock ?? (context.canComplete ? "Reviewed the executor's verified merge and Linear completion." : "Reviewed the current artifacts and selected the next stage."),
+    summary: initial.orchestratorBlock ?? (context.canComplete ? "Reviewed the executor's verified pull request and Linear completion." : "Reviewed the current artifacts and selected the next stage."),
   };
   await emitResult(decision);
   process.exit(0);
 }
-const result: Record<string, any> = { issueId: context.issueId, stage: context.stage, outcome: "completed", complexity: null, commit: null, validatedBaseSha: null, validationCommentId: null, planDocumentId: null, planUrl: null, summary: `${kind} test fixture completed ${context.stage}` };
+const result: Record<string, any> = { issueId: context.issueId, stage: context.stage, outcome: "completed", complexity: null, commit: null, validatedBaseSha: null, validationCommentId: null, prUrl: null, planDocumentId: null, planUrl: null, summary: `${kind} test fixture completed ${context.stage}` };
 async function advanceBase() {
   await Bun.write(join(context.repo, "advanced.txt"), `advanced during ${context.stage} ${context.attempt}`);
   git(context.repo, "add", "advanced.txt"); git(context.repo, "commit", "-m", "Advance base");
@@ -121,20 +121,14 @@ switch (context.stage) {
     if (initial.alwaysAdvanceBase || (initial.advanceBaseOnce && context.attempt === 1)) await advanceBase();
     break;
   }
-  case "merge": {
+  case "pr": {
     const validation = context.previousResults.validate;
     result.commit = validation.commit; result.validatedBaseSha = validation.validatedBaseSha; result.validationCommentId = validation.validationCommentId;
-    if (initial.advanceBaseAtMerge && context.attempt === 1) { await advanceBase(); result.outcome = "needs_validation"; break; }
-    if (!initial.falseComplete) {
-      let integration = context.repo;
-      if (git(integration, "branch", "--show-current") !== context.baseBranch) {
-        integration = join(context.runDir, "integration");
-        git(context.repo, "worktree", "add", integration, context.baseBranch);
-      }
-      git(integration, "merge", "--ff-only", context.branch);
-    }
-    const path = join(context.stageDir, "merge.md"); await Bun.write(path, `Merged ${result.commit} into ${context.baseBranch}`);
-    helper("comment", context.issueId, "--file", path, "--key", `${context.runId}-merge`);
+    if (initial.advanceBaseAtPr && context.attempt === 1) { await advanceBase(); result.outcome = "needs_validation"; break; }
+    result.prUrl = "https://github.com/linear-test/repo/pull/1";
+    if (!initial.falseComplete) git(context.worktree, "push", "origin", context.branch);
+    const path = join(context.stageDir, "pr.md"); await Bun.write(path, `Opened PR ${result.prUrl} for ${result.commit} against ${context.baseBranch}`);
+    helper("comment", context.issueId, "--file", path, "--key", `${context.runId}-pr`);
     helper("done", context.issueId);
     break;
   }

@@ -1,12 +1,13 @@
 {
   "type": "object",
   "additionalProperties": false,
-  "required": ["issueId", "outcome", "baseBranch", "commit", "validationCommentId", "summary"],
+  "required": ["issueId", "outcome", "baseBranch", "commit", "prUrl", "validationCommentId", "summary"],
   "properties": {
     "issueId": { "type": "string" },
     "outcome": { "type": "string", "enum": ["completed", "blocked", "failed"] },
     "baseBranch": { "type": "string", "enum": ["main", "master"] },
     "commit": { "type": ["string", "null"] },
+    "prUrl": { "type": ["string", "null"] },
     "validationCommentId": { "type": ["string", "null"] },
     "summary": { "type": "string" }
   }
