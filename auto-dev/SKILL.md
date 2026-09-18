@@ -9,7 +9,7 @@ description: 接收一个开发任务 prompt（没有则探索 repo 找改进点
 
 先从 `args` 中提取分发参数，其余内容作为任务 prompt；用户也可能直接在对话里给出。两者都有时以对话内容为准，`args` 作为补充。没有开发任务 prompt（包括只给了分发参数）时 make-plan 会自动进入 repo 探索模式。
 
-开始前读取[Agent 分发规则](../herdr-finish-plan/references/agent-routing.md)，确定全局默认 agent，并保留用户对具体任务的指定。将这些执行偏好传给下面两个规划阶段，写进计划与队列；不要在切换 session 时重新猜测默认值。
+开始前读取[Agent 分发规则](herdr-finish-plan/references/agent-routing.md)，确定全局默认 agent，并保留用户对具体任务的指定。将这些执行偏好传给下面两个规划阶段，写进计划与队列；不要在切换 session 时重新猜测默认值。
 
 ## 1. 写 plan
 
