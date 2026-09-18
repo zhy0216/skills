@@ -9,7 +9,7 @@ description: "调用 Token Plan 文生图模型，根据文字描述生成图像
 
 ## 执行步骤
 
-1. 从用户输入中提取 prompt（图像描述）、model（默认 wan2.7-image）、size（默认 1024\*1024）。用户明确指定模型时必须严格使用该模型名，不要回退到默认值。
+1. 从用户输入中提取 prompt（图像描述）、model（默认 wan2.7-image-pro）、size（默认 1024\*1024）。用户明确指定模型时必须严格使用该模型名，不要回退到默认值。
 
 2. 使用 bash 执行 curl 生成图像：
 
@@ -28,9 +28,9 @@ curl -s -X POST "https://token-plan.cn-beijing.maas.aliyuncs.com/api/v1/services
 
 ## 可用模型
 
-- wan2.7-image（默认）— 多风格
-- wan2.7-image-pro — 支持 4K
-- qwen-image-2.0 / qwen-image-2.0-pro — 当前套餐未开通，调用会返回 `AccessDenied.Unpurchased`
+- wan2.7-image-pro（默认）— 功能最全，支持组图生成、最高 4096\*4096，强化五官/色彩/超长文字渲染；万相系列擅长插画、绘画流派、人像，游戏/概念图等风格化场景效果好
+- wan2.7-image — 万相同系列，多风格
+- qwen-image-3.0-pro — 千问图像3.0旗舰版，支持 prompt 智能改写，擅长文本渲染、精准生成贴合物理材质的中英文；商品海报、电商招牌、UI/PPT 等含文字排版场景更优
 
 完整列表以千问AI平台模型列表为准。
 
