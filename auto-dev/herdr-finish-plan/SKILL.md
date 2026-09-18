@@ -1,6 +1,6 @@
 ---
 name: herdr-finish-plan
-description: 使用 Herdr 并行执行 plans/{plan-name}/todos/ 队列：为每个 todo 创建独立 Git worktree，启动最多 5 个 Codex / OpenCode agent，默认跟随宿主、支持单任务指定、按难度选模型和推理强度，逐个 rebase、校验、合并并清理。仅在用户显式调用 $herdr-finish-plan、输入 /herdr-finish-plan 并给出 plan 名称时使用。
+description: 使用 Herdr 并行执行 plans/{plan-name}/todos/ 队列：为每个 todo 创建独立 Git worktree，启动最多 5 个 Codex / OpenCode agent，默认跟随宿主、支持单任务指定、按难度从模型白名单选模型（思考深度固定 max），逐个 rebase、校验、合并并清理。仅在用户显式调用 $herdr-finish-plan、输入 /herdr-finish-plan 并给出 plan 名称时使用。
 disable-model-invocation: true
 ---
 
@@ -14,7 +14,7 @@ disable-model-invocation: true
 
 `args` 必须给出 plan 名称（`plans/` 下的目录名）。未给出时列出 `plans/` 下所有含 `todos/` 的目录让用户选，不要猜。
 
-先读取[Agent 分发规则](references/agent-routing.md)。支持全局 `--agent codex|opencode`、可重复的 `--task-agent <todo文件名>=codex|opencode`，以及等效的自然语言指定；单任务指定优先。`--model` 和 Codex 的 `--reasoning-effort` 按该文档覆盖默认值。这些是 skill 输入，不直接传给 Herdr。
+先读取[Agent 分发规则](references/agent-routing.md)。支持全局 `--agent codex|opencode`、可重复的 `--task-agent <todo文件名>=codex|opencode`，以及等效的自然语言指定；单任务指定优先。`--model` 按该文档在白名单内覆盖默认模型；思考深度固定 max，不接受推理强度覆盖。这些是 skill 输入，不直接传给 Herdr。
 
 ## 1. 前置检查
 
@@ -72,11 +72,11 @@ herdr worktree create --cwd <repo-root> --branch <task-branch> --base <base-bran
 
 从 JSON 响应中读取实际的 workspace ID、worktree 路径和 root pane ID，不要猜测。保存以下映射，直到任务清理完毕：todo 文件、任务分支、workspace ID、pane ID、agent 名称与类型、模型、Codex 推理强度、worktree 路径和状态。
 
-在 worktree 的 root pane 按[Agent 分发规则](references/agent-routing.md)启动该任务最终选定的类型，使用已经解析的模型和推理强度。根据类型只执行对应命令：
+在 worktree 的 root pane 按[Agent 分发规则](references/agent-routing.md)启动该任务最终选定的类型，使用已经解析的白名单模型；Codex 推理强度固定 max。根据类型只执行对应命令：
 
 ```bash
-# Codex；替换模型和 effort 为该任务解析结果
-herdr agent start <agent-name> --kind codex --pane <pane-id> -- --dangerously-bypass-approvals-and-sandbox --model <model-id> -c 'model_reasoning_effort="<effort>"'
+# Codex；替换模型为该任务解析结果，effort 固定 max
+herdr agent start <agent-name> --kind codex --pane <pane-id> -- --dangerously-bypass-approvals-and-sandbox --model <model-id> -c 'model_reasoning_effort="max"'
 
 # OpenCode；替换模型为该任务解析结果
 herdr agent start <agent-name> --kind opencode --pane <pane-id> -- --auto --model <model-id>

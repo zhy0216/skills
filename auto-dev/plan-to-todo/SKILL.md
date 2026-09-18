@@ -22,10 +22,10 @@ description: 把已有方案（plans/{plan-name}/plan.md 或对话里的任务�
 
 ### todos/README.md
 
-- 一个"优先级"表格：文件、优先级（P0→P2）、难度（easy / medium / hard / extreme）、agent、模型 / Codex 推理强度、一句话说明；
+- 一个"优先级"表格：文件、优先级（P0→P2）、难度（easy / medium / hard / extreme）、agent、模型（白名单内）、一句话说明；
 - 一个"## 文件"有序列表，明确执行顺序；
 - 有依赖时逐行标注"依赖 01-xxx"；
-- 一个"执行偏好"区块，保存 `default_agent: codex` 或 `default_agent: opencode`；仅在用户显式指定时保存 `default_model` / `default_reasoning_effort`。表格显示按分发规则解析后的实际选择，标明单任务指定或继承默认。
+- 一个"执行偏好"区块，保存 `default_agent: codex` 或 `default_agent: opencode`；仅在用户显式指定时保存 `default_model`（白名单内）。表格显示按分发规则解析后的实际选择，标明单任务指定或继承默认。
 
 ### todo 文件
 
@@ -48,7 +48,7 @@ description: 把已有方案（plans/{plan-name}/plan.md 或对话里的任务�
 
 ### 难度判定
 
-为每个 todo 文件给出 `difficulty`，执行端先解析 agent，再按共享分发规则选模型和推理强度：
+为每个 todo 文件给出 `difficulty`，执行端先解析 agent，再按共享分发规则从白名单选模型（思考深度固定 max）：
 
 - **easy**：改一两处、模式明确、照着旁边代码抄就行（改文案、加字段、补校验、调样式）。
 - **medium**：单模块内多文件协作、需要理解一段现有逻辑再改、写新的测试。
@@ -59,7 +59,7 @@ description: 把已有方案（plans/{plan-name}/plan.md 或对话里的任务�
 
 ## 3. 收尾
 
-向用户报告：队列位置、任务顺序、依赖关系、每个文件的难度、最终 agent、模型与 Codex 推理强度、哪些任务可并行。共享分发规则中的难度映射是唯一来源。
+向用户报告：队列位置、任务顺序、依赖关系、每个文件的难度、最终 agent、模型、哪些任务可并行。共享分发规则中的难度映射是唯一来源。
 
 ## 硬性规则
 

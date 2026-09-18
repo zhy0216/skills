@@ -1,6 +1,6 @@
 ---
 name: herdr-finish-todo
-description: 使用 Herdr 为 todo 队列创建独立 Git worktree，并在最多 5 个并行任务中启动 Codex / OpenCode agent，默认跟随宿主、支持单任务指定、按难度选模型和推理强度；每个任务完成后先 rebase 原分支并解决冲突，再合并、清理 worktree、补充下一项。仅在用户显式调用 $herdr-finish-todo、输入 /herdr-finish-todo，或明确要求用 Herdr 并行清完 todos 时使用。
+description: 使用 Herdr 为 todo 队列创建独立 Git worktree，并在最多 5 个并行任务中启动 Codex / OpenCode agent，默认跟随宿主、支持单任务指定、按难度从模型白名单选模型（思考深度固定 max）；每个任务完成后先 rebase 原分支并解决冲突，再合并、清理 worktree、补充下一项。仅在用户显式调用 $herdr-finish-todo、输入 /herdr-finish-todo，或明确要求用 Herdr 并行清完 todos 时使用。
 ---
 
 # Herdr Finish TODO
@@ -11,7 +11,7 @@ description: 使用 Herdr 为 todo 队列创建独立 Git worktree，并在最�
 
 显式调用本 skill 表示用户授权：在当前仓库内创建和删除本轮专用 worktree/本地任务分支、按分发规则启动 Codex / OpenCode、修改 todo 涉及的文件、运行仓库校验、创建本地 commit、rebase 和合并回原分支。不要 push、创建 PR、修改远端状态或操作本轮之外的 workspace/worktree，除非用户另行要求。
 
-先读取[Agent 分发规则](../herdr-finish-plan/references/agent-routing.md)。支持全局 `--agent codex|opencode`、可重复的 `--task-agent <todo文件名>=codex|opencode`，以及等效的自然语言指定；单任务指定优先。`--model` 和 Codex 的 `--reasoning-effort` 按该文档覆盖默认值。这些是 skill 输入，不直接传给 Herdr。
+先读取[Agent 分发规则](../herdr-finish-plan/references/agent-routing.md)。支持全局 `--agent codex|opencode`、可重复的 `--task-agent <todo文件名>=codex|opencode`，以及等效的自然语言指定；单任务指定优先。`--model` 按该文档在白名单内覆盖默认模型；思考深度固定 max，不接受推理强度覆盖。这些是 skill 输入，不直接传给 Herdr。
 
 `args` 可选，用于按文件名、序号、优先级或条目 id 缩小范围；过滤后仍保留原队列顺序。
 
@@ -69,11 +69,11 @@ herdr worktree create --cwd <repo-root> --branch <task-branch> --base <base-bran
 
 从 JSON 响应中读取实际的 workspace ID、worktree 路径和 root pane ID，不要猜测。保存以下映射，直到任务清理完毕：todo 文件、任务分支、workspace ID、pane ID、agent 名称与类型、模型、Codex 推理强度、worktree 路径和状态。
 
-在 worktree 的 root pane 按[Agent 分发规则](../herdr-finish-plan/references/agent-routing.md)启动该任务最终选定的类型，使用已解析的模型和推理强度。根据类型只执行对应命令：
+在 worktree 的 root pane 按[Agent 分发规则](../herdr-finish-plan/references/agent-routing.md)启动该任务最终选定的类型，使用已解析的白名单模型；Codex 推理强度固定 max。根据类型只执行对应命令：
 
 ```bash
-# Codex；替换模型和 effort 为该任务解析结果
-herdr agent start <agent-name> --kind codex --pane <pane-id> -- --dangerously-bypass-approvals-and-sandbox --model <model-id> -c 'model_reasoning_effort="<effort>"'
+# Codex；替换模型为该任务解析结果，effort 固定 max
+herdr agent start <agent-name> --kind codex --pane <pane-id> -- --dangerously-bypass-approvals-and-sandbox --model <model-id> -c 'model_reasoning_effort="max"'
 
 # OpenCode；替换模型为该任务解析结果
 herdr agent start <agent-name> --kind opencode --pane <pane-id> -- --auto --model <model-id>

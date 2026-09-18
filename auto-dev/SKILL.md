@@ -53,14 +53,14 @@ description: 接收一个开发任务 prompt（没有则探索 repo 找改进点
    herdr pane split --current --direction right --cwd <repo-root> --no-focus
    ```
 
-3. 按分发规则检查并启动全局默认 agent 的协调器，始终使用 auto / YOLO 模式（名称符合 `[a-z][a-z0-9_-]{0,31}`，如 `plan-<plan-slug>`）。未显式覆盖模型/推理强度时，根据类型只执行下面对应的一条：
+3. 按分发规则检查并启动全局默认 agent 的协调器，始终使用 auto / YOLO 模式（名称符合 `[a-z][a-z0-9_-]{0,31}`，如 `plan-<plan-slug>`）。未显式覆盖白名单模型时，根据类型只执行下面对应的一条：
 
    ```bash
    # Codex 宿主默认用 Codex 协调器
-   herdr agent start plan-<plan-slug> --kind codex --pane <pane-id> -- --dangerously-bypass-approvals-and-sandbox --model gpt-6-astra -c 'model_reasoning_effort="high"'
+   herdr agent start plan-<plan-slug> --kind codex --pane <pane-id> -- --dangerously-bypass-approvals-and-sandbox --model gpt-6-astra -c 'model_reasoning_effort="max"'
 
    # OpenCode 宿主保留原有默认
-   herdr agent start plan-<plan-slug> --kind opencode --pane <pane-id> -- --auto --model bailian-token-plan/qwen3.8-flash
+   herdr agent start plan-<plan-slug> --kind opencode --pane <pane-id> -- --auto --model alibaba-token-plan-cn/qwen3.8-max
    ```
 
 4. 发送执行指令（不加 `--wait`，执行可能长达数小时），要求新协调器读取队列中的执行偏好和每个 todo 的 agent 指定：
