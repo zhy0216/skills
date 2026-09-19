@@ -232,7 +232,7 @@ describe("watcher and Git integration", () => {
   }, 10_000);
 
   for (const base of ["main", "master"] as const) {
-    test(`dispatches YOLO/xhigh, publishes validation, and verifies a real pull request into ${base}`, async () => {
+    test(`verifies a pull request into ${base} and preserves the worktree for manual cleanup`, async () => {
       const s = await setup(); const repo = await initRepo(s.root, base);
       const result = await runOnce(await s.config());
       expect(result).toEqual({ completed: 1, failed: 0, skipped: 0, planned: 0 });
@@ -251,12 +251,16 @@ describe("watcher and Git integration", () => {
       expect((await s.state()).comments[0].body).toContain(verified.commit);
       expect((await s.state()).comments.some((comment: any) => comment.body.includes(verified.prUrl))).toBe(true);
       expect(existsSync(join(repo, ".git/linear-watch.lock"))).toBe(false);
-      expect(existsSync(invocation.context.worktree)).toBe(false);
-      expect(await git(repo, "branch", "--list", invocation.context.branch)).toBe("");
+      expect(existsSync(invocation.context.worktree)).toBe(true);
+      expect(await git(invocation.context.worktree, "rev-parse", "HEAD")).toBe(verified.commit);
+      expect(await git(invocation.context.worktree, "branch", "--show-current")).toBe(invocation.context.branch);
+      expect(await git(repo, "rev-parse", `refs/heads/${invocation.context.branch}`)).toBe(verified.commit);
       const herdr = await s.herdrState();
       expect(Object.keys(herdr.workspaces).length).toBeGreaterThan(0);
-      expect(Object.values(herdr.workspaces).every((w: any) => w.closed)).toBe(true);
-      expect(Object.values(herdr.panes).every((p: any) => !p.alive)).toBe(true);
+      expect(Object.values(herdr.workspaces).every((w: any) => !w.closed)).toBe(true);
+      expect(herdr.panes[invocation.context.rootPane].alive).toBe(true);
+      expect(Object.entries(herdr.panes).every(([id, pane]: [string, any]) => id === invocation.context.rootPane || !pane.alive)).toBe(true);
+      expect(Object.values(herdr.agents).every((agent: any) => !agent.alive)).toBe(true);
     }, 15_000);
   }
 

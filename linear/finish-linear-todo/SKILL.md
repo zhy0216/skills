@@ -7,6 +7,8 @@ description: 完成一个指定的 Linear Todo issue：创建 Git worktree、改
 
 将一个明确的 Linear issue 从 Todo 推进到已验证、已开出 PR。使用 `linear-cli`，沿用当前认证和 workspace profile。调用本 skill 或收到 watcher 派发即授权本条 issue 的实现、文档、description、comments、状态更新、提交、推送 issue 分支与开 PR；持续执行，不在规划后停下等确认。用户另有明确限制时遵守该限制。不合回主分支、不合并 PR：合入由人工评审决定。
 
+**必须保留 issue worktree，禁止自动删除。无论手动调用还是 watcher 派发，清理都由用户自行执行；任务完成、PR 打开或合并、Linear Done 均不代表获准清理。**
+
 先定位本目录的绝对路径。共用助手是 [../scripts/linear-issue.ts](../scripts/linear-issue.ts)，命令和发布语义见 [../references/linear-cli.md](../references/linear-cli.md)。不要把另一款名为 `linear` 的 CLI 的命令套在 `linear-cli` 上。
 
 watcher 使用 `orchestrator`、`planner`、`executor` 三个角色，每个角色可选 Codex 或 OpenCode；每个阶段由 watcher 在 issue 的 Herdr workspace 中以独立 pane 启动一个交互式 agent session，`LINEAR_WATCH_CONTEXT` 由 pane 环境注入。读取 `LINEAR_WATCH_CONTEXT` 后，若 `role=orchestrator`，先读 [角色与阶段执行规则](../references/stages.md)，只审阅和返回调度决策，不进入下面的实施流程。若包含 `stage`，按该规则完成当前阶段，遵循 `orchestratorInstructions`，将结构化结果交还协调流程。planner 负责 analyze/plan/todos；executor 负责 implement/validate/pr，包括最终 PR。`agentConfig` 已用于启动当前 session，不自行改回固定 Codex/xhigh 或启动下一阶段。没有角色和阶段的手动调用继续按下面的完整流程执行。
@@ -86,9 +88,9 @@ PR 正文用 Markdown 文件准备，至少包含：issue 链接与实现结果�
 
 PR 打开后不合并、不改动主分支，把 PR 留给人工评审。在 issue comments 发布 PR 收尾评论（含 `prUrl`、实际 commit、验证评论链接，可用第 3 阶段的 markdown 与 key 约定），再运行助手 `done ISSUE`（自定义状态传 `--state`）并读回 `completed`。若评论或状态更新失败，记录“PR 已开、Linear 收尾失败”，恢复时只补全收尾，不能再次实现或推送同一个任务。
 
-确认推送、PR 和 Linear 收尾完成后处理清理：watcher 派发时不要清理 issue worktree、分支或 Herdr workspace——你正运行在该 workspace 的 pane 里，watcher 读回验证成功后会统一 `workspace close`、`git worktree remove` 并删除本地分支（远程分支与 PR 保留）。手动调用时，可清理本次创建且干净的 issue worktree 并删除本地分支副本；分支和 PR 已在远端，保留 runDir 中的日志与上下文。失败、冲突、有未提交内容时保留工作树以便恢复。
+确认推送、PR 和 Linear 收尾完成后，保留 issue worktree、本地分支、关联 Herdr workspace，以及 runDir 中的日志与上下文，交给用户检查和手动清理。agent 与 watcher 均不得执行 `git worktree remove`、删除 worktree 目录或本地 issue 分支，也不得关闭关联 Herdr workspace。watcher 仍会结束已完成阶段的 agent pane 并释放运行锁。手动调用遵循同样的保留规则，即使工作树干净也不清理；失败、冲突、有未提交内容时同样保留现场。
 
-完整流程结束时返回 issue 链接、PR 链接、实际 commit 和验证评论链接；只有验证产物发布、issue 分支推送到 origin、PR 打开且包含验证产物、Linear Done 全部确认后才声明 issue 已完成。PR 的合并由人工评审决定，本 skill 不合回主分支。watcher 调用按 context 的 `stageSchemaPath` 返回本轮协调决策或当前阶段结果；executor 完成开 PR 后，由 orchestrator 审阅收尾，watcher 读回验证最终结果。
+完整流程结束时返回 issue 链接、PR 链接、实际 commit、验证评论链接，以及保留的 worktree 绝对路径和本地分支名，注明“worktree 已保留，由用户手动清理”；只有验证产物发布、issue 分支推送到 origin、PR 打开且包含验证产物、Linear Done 全部确认后才声明 issue 已完成。PR 的合并由人工评审决定，本 skill 不合回主分支。watcher 调用按 context 的 `stageSchemaPath` 返回本轮协调决策或当前阶段结果，在 summary 中说明保留位置；executor 完成开 PR 后，由 orchestrator 审阅收尾，watcher 读回验证最终结果。
 
 ## 失败与恢复
 

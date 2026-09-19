@@ -49,7 +49,7 @@ context 同时包含 `role` 与 `stage` 时，只完成当前阶段。读取 `or
 | `todos` | planner | 将有编号、依赖、验收条件的 checklist 写入最新 description 的管理小节，保留用户内容和 plan 链接。 |
 | `implement` | executor | 在同一个 issue worktree 内实现并提交，做必要开发验证；复杂任务同步 description 的进度。返回 HEAD commit，保持工作树干净。返工时修正已有实现。 |
 | `validate` | executor | 集成原 main/master 的最新提交，运行最终验证，必要时修复并提交；将真实产物发到 issue comments。返回 commit、validatedBaseSha 和 validationCommentId。保留工作树和 In Progress。 |
-| `pr` | executor | 只使用上一阶段已验证的 commit：推送 issue 分支到 origin，用 gh 开以记录的 main/master 为 base 的 PR，把验证产物（含截图）内嵌进 PR，把 PR 链接发到 issue comments 并改 Done；不合并 PR、不清理工作树、分支或 Herdr workspace（watcher 读回验证后收尾），交回 orchestrator 核对收尾。 |
+| `pr` | executor | 只使用上一阶段已验证的 commit：推送 issue 分支到 origin，用 gh 开以记录的 main/master 为 base 的 PR，把验证产物（含截图）内嵌进 PR，把 PR 链接发到 issue comments 并改 Done；不合并 PR，agent 与 watcher 均保留工作树、本地分支和 Herdr workspace，由用户手动清理；在 summary 中给出保留的 worktree 绝对路径和分支名，交回 orchestrator 核对收尾。 |
 
 简单任务通常按 `analyze → implement → validate → pr` 执行；复杂任务增加 `plan → todos`。每个 issue 由 watcher 用 `herdr worktree create` 建立独立 worktree 和 Herdr workspace；orchestrator 与所有 stage 都由所属角色的配置在该 workspace 的独立 pane 中启动为交互式 agent session（一次一个，结束即关闭 pane），通过同一个 worktree 和结构化记录交接。
 

@@ -13,6 +13,13 @@ const statePath = process.env.LINEAR_HERDR_STATE;
 if (!statePath) { process.stderr.write("LINEAR_HERDR_STATE is not set"); process.exit(1); }
 const load = (): State => existsSync(statePath) ? JSON.parse(readFileSync(statePath, "utf8")) : { seq: 0, workspaces: {}, panes: {}, agents: {} };
 const save = (state: State) => writeFileSync(statePath, JSON.stringify(state));
+// Real herdr reaps an agent when its pane closes (agents stay listed as done until then).
+function reapAgents(state: State, workspaceId: string) {
+  for (const agent of Object.values(state.agents)) {
+    const pane = state.panes[agent.pane];
+    if (agent.alive && pane.workspace === workspaceId && !pane.alive) agent.alive = false;
+  }
+}
 function fail(code: string, message: string): never { process.stderr.write(JSON.stringify({ error: { code, message } })); process.exit(1); }
 
 const args = Bun.argv.slice(2);
@@ -37,6 +44,7 @@ if (group === "workspace" && sub === "close") {
     pane.alive = false;
     if (pane.childPid) { try { process.kill(-pane.childPid, "SIGKILL"); } catch { /* already gone */ } pane.childPid = undefined; }
   }
+  reapAgents(state, rest[0]!);
   save(state); json({ type: "ok" });
 }
 
@@ -75,6 +83,7 @@ if (group === "pane" && sub === "close") {
   if (!pane || !pane.alive) fail("pane_not_found", `pane ${rest[0]} not found`);
   pane.alive = false;
   if (pane.childPid) { try { process.kill(-pane.childPid, "SIGKILL"); } catch { /* already gone */ } pane.childPid = undefined; }
+  reapAgents(state, pane.workspace);
   save(state); json({ type: "ok" });
 }
 

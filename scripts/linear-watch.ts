@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { digest, LinearClient, type Issue } from "../linear/scripts/linear-client";
-import { AgentCleanupError, closeHerdrWorkspace, createHerdrWorktree, herdrPing, makeHerdr, resolveRoleAgents, MAX_ACTIVE_AGENTS, STAGE_ROLES, type Herdr, type AgentSettings, type RoleAgents } from "../linear/scripts/agents";
+import { AgentCleanupError, createHerdrWorktree, herdrPing, makeHerdr, resolveRoleAgents, MAX_ACTIVE_AGENTS, STAGE_ROLES, type Herdr, type AgentSettings, type RoleAgents } from "../linear/scripts/agents";
 import { runStages, type RunContext } from "../linear/scripts/stages";
 import { acquireLock, git, resolveBaseBranch, STATE_ROOT, DEFAULT_HERDR_SOCKET } from "../linear/scripts/watcher-runtime";
 import { runCreation } from "../linear/scripts/create-issues";
@@ -186,15 +186,8 @@ export async function runOnce(config: Runtime, options: { mode?: Mode; dryRun?: 
       await Bun.write(join(runDir, "result.json"), JSON.stringify(result, null, 2));
       await verifyCompletion(client, fresh, repo, baseBranch, context.branch, result);
       await Bun.write(join(runDir, "verified.json"), JSON.stringify({ ...result, verifiedAt: new Date().toISOString() }, null, 2));
-      try {
-        await closeHerdrWorkspace(config.herdr, context.workspaceId);
-        await git(repo, "worktree", "remove", context.worktree);
-        // The pushed branch and its open pull request stay on the remote for human review.
-        await git(repo, "branch", "-D", context.branch);
-        log("worktree-cleaned", { issue: fresh.identifier, worktree: context.worktree, branch: context.branch });
-      } catch (error: any) {
-        log("cleanup-failed", { issue: fresh.identifier, workspaceId: context.workspaceId, worktree: context.worktree, branch: context.branch, error: error.message });
-      }
+      // Keep the issue worktree, branch, and workspace for the user's review and manual cleanup.
+      log("worktree-preserved", { issue: fresh.identifier, workspaceId: context.workspaceId, worktree: context.worktree, branch: context.branch });
       summary.completed++;
       log("completed", { issue: fresh.identifier, commit: result.commit, prUrl: result.prUrl, validationCommentId: result.validationCommentId, runDir });
     } catch (error: any) {

@@ -49,7 +49,7 @@ scripts/config.opencode.example.json
 
 每条 route 至少提供 `team` 或 `project`；两者同时提供时都必须匹配，支持 Team key/name/UUID 和 Project name/UUID。不要设置重叠路由；同一个 issue 匹配多条会报告歧义并跳过。`todoState` 默认 `Todo`，可设置实际名称或 ID。`inProgressState`、`doneState` 可指定本 Team 的状态。`baseBranch` 可选 `main`/`master`；从 feature 分支启动且无法确定原主分支时应显式设置。
 
-可选顶层配置：`linearProfile`、`linearBin`、`codexBin`、`opencodeBin`、`herdrBin`、`herdrSocket`、`stateDir`、`defaults`、`agents`、`timeoutMinutes`、`maxActiveAgents`、`creation`。任务全部通过 Herdr 执行：每条 issue 用 `herdr worktree create` 建立独立 worktree 与 workspace，orchestrator/planner/executor 的每个阶段都在该 workspace 的专用 pane 里以交互式 agent 启动（Codex 带 YOLO 参数、OpenCode 带 `--auto`），一次一个，结束即关闭 pane；成功后 watcher `workspace close` 并删除 worktree 和本地分支（远程分支与 PR 保留待人工评审），失败时保留现场。`herdrSocket` 选择目标 session 的 socket（默认取 `HERDR_SOCKET_PATH`，否则 `~/.config/herdr/herdr.sock`，即 default session；命名 session 用其 `sessions/<name>/herdr.sock`）。`timeoutMinutes` 默认 720，是一条 issue 所有阶段共用的执行时限；允许任务跨过下一个四小时刻度，期间用锁防止重入。`maxActiveAgents` 默认 8，是整个 Herdr session 允许并存的活动 agent（`herdr agent list` 中状态非 `done`）上限；每次启动阶段 agent 前都会统计活动数，达到上限就退避轮询等待，直到有空位或超出 `timeoutMinutes`，因此等待也会占用该 issue 的执行时限。旧顶层 `model` 仍兼容，新配置请使用 `defaults.model`。
+可选顶层配置：`linearProfile`、`linearBin`、`codexBin`、`opencodeBin`、`herdrBin`、`herdrSocket`、`stateDir`、`defaults`、`agents`、`timeoutMinutes`、`maxActiveAgents`、`creation`。任务全部通过 Herdr 执行：每条 issue 用 `herdr worktree create` 建立独立 worktree 与 workspace，orchestrator/planner/executor 的每个阶段都在该 workspace 的专用 pane 里以交互式 agent 启动（Codex 带 YOLO 参数、OpenCode 带 `--auto`），一次一个，结束即关闭 pane；无论成功或失败，watcher 都保留 worktree、workspace 和本地分支，远程分支与 PR 也保留，全部交由用户验证后手动清理，任务完成、PR 打开或标记 Done 均不触发清理。`herdrSocket` 选择目标 session 的 socket（默认取 `HERDR_SOCKET_PATH`，否则 `~/.config/herdr/herdr.sock`，即 default session；命名 session 用其 `sessions/<name>/herdr.sock`）。`timeoutMinutes` 默认 720，是一条 issue 所有阶段共用的执行时限；允许任务跨过下一个四小时刻度，期间用锁防止重入。`maxActiveAgents` 默认 8，是整个 Herdr session 允许并存的活动 agent（`herdr agent list` 中状态非 `done`）上限；每次启动阶段 agent 前都会统计活动数，达到上限就退避轮询等待，直到有空位或超出 `timeoutMinutes`，因此等待也会占用该 issue 的执行时限。旧顶层 `model` 仍兼容，新配置请使用 `defaults.model`。
 
 ### 角色的 agent 配置
 
@@ -193,7 +193,7 @@ creator 在记录的 main/master commit 的独立 worktree 中按 skill 探索�
 
 ## 开发模式的执行与恢复
 
-每轮先完成所有分页，再按 priority、创建时间顺序派发，issue 之间顺序执行；失败不会阻止本轮其他 issue。领取 issue 后 watcher 先用 `herdr worktree create` 建立独立 worktree 和 workspace。每次启动阶段 agent 前先执行活动数检查：`herdr agent list` 统计状态非 `done` 的 agent，达到 `maxActiveAgents`（默认 8）时以 0.5～15s 退避轮询，直到 session 空闲出位置才继续，等待计入该 issue 的 `timeoutMinutes`；多个 watcher 并发检查时瞬时可能短暂各超一个。简单任务执行 `analyze → implement → validate → pr`，复杂任务在 analyze 后增加 `plan → todos`。每次交接先运行一轮 orchestrator，它读取证据、选择下一阶段并给出指令；脚本使用所属角色的配置在该 workspace 的新 pane 中启动交互式 agent。各阶段通过同一个 worktree、Linear 产物和结构化上下文交接。最终验证产物发布到 comments 后，推送 issue 分支并创建以原 main/master 为 base 的 PR，验证产物（含截图）内嵌进 PR 正文，再标记 Done；成功读回后 watcher 关闭 workspace、清理 worktree 和本地分支，远程分支与 PR 保留待人工评审，失败则保留现场。watcher 不合并 PR、不推送主分支。
+每轮先完成所有分页，再按 priority、创建时间顺序派发，issue 之间顺序执行；失败不会阻止本轮其他 issue。领取 issue 后 watcher 先用 `herdr worktree create` 建立独立 worktree 和 workspace。每次启动阶段 agent 前先执行活动数检查：`herdr agent list` 统计状态非 `done` 的 agent，达到 `maxActiveAgents`（默认 8）时以 0.5～15s 退避轮询，直到 session 空闲出位置才继续，等待计入该 issue 的 `timeoutMinutes`；多个 watcher 并发检查时瞬时可能短暂各超一个。简单任务执行 `analyze → implement → validate → pr`，复杂任务在 analyze 后增加 `plan → todos`。每次交接先运行一轮 orchestrator，它读取证据、选择下一阶段并给出指令；脚本使用所属角色的配置在该 workspace 的新 pane 中启动交互式 agent。各阶段通过同一个 worktree、Linear 产物和结构化上下文交接。最终验证产物发布到 comments 后，推送 issue 分支并创建以原 main/master 为 base 的 PR，验证产物（含截图）内嵌进 PR 正文，再标记 Done；成功与失败均不清理现场：watcher 保留 worktree、workspace、本地分支、远程分支与 PR，等待用户验证后自行清理。watcher 不合并 PR、不推送主分支。
 
 orchestrator 可以要求重新规划或返工；相关后续结果会失效，需要重新验证。主分支在验证后或开 PR 前前进时，协调流程再次派发 executor/validate 和 executor/pr。主分支变化累计三次导致验证失效时停止；一条 issue 最多运行 24 轮协调决策，超时或无进展时保留工作树和日志。
 
@@ -207,4 +207,4 @@ orchestrator 可以要求重新规划或返工；相关后续结果会失效，�
 
 ## 验证开发改动
 
-在 `linear/` 目录运行 `bun install` 后，执行 `bun run check` 和 `bun test`。测试使用模拟 Linear/Codex/OpenCode/Herdr CLI 和临时 Git 仓库，覆盖参数继承、四个角色经 Herdr pane 的实际派发、结果文件缺失时的一次提醒、协调返工/重新规划、单条试跑、验证重试和真实 Git 推送/PR 验证与 worktree 清理，创建模式另外覆盖目标解析、负载限制、去重、依赖方向、部分创建和响应丢失后的恢复、cron 模式及源码证据校验。不改真实 Linear issues，也不接触真实 Herdr session。
+在 `linear/` 目录运行 `bun install` 后，执行 `bun run check` 和 `bun test`。测试使用模拟 Linear/Codex/OpenCode/Herdr CLI 和临时 Git 仓库，覆盖参数继承、四个角色经 Herdr pane 的实际派发、结果文件缺失时的一次提醒、协调返工/重新规划、单条试跑、验证重试和真实 Git 推送/PR 验证与 worktree 保留（断言任务成功后不清理、留给用户手动处理），创建模式另外覆盖目标解析、负载限制、去重、依赖方向、部分创建和响应丢失后的恢复、cron 模式及源码证据校验。不改真实 Linear issues，也不接触真实 Herdr session。

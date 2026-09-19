@@ -24,7 +24,7 @@ const instructions: Record<Stage, string> = {
   todos: "读取上一阶段 Document，将有编号、依赖和验收条件的 checklist 发布到 issue description 的管理小节，保留原始需求。只完成任务拆解。",
   implement: "在既有 issue worktree 中实现完整需求；复杂任务按 Linear Document/description 执行并同步 checkbox；运行必要开发检查并提交。保留 issue worktree，交给后续 validate 阶段。",
   validate: "在 issue worktree 将分支集成到当前记录的 main/master 最新提交；修复相关问题并提交，验证最终代码，把真实 validation 产物发布到 issue comments。返回完整 commit、validatedBaseSha、validationCommentId。此阶段不推送分支、不开 PR，也不改 Done。",
-  pr: "读取上一阶段 validate 的 commit、validatedBaseSha、validationCommentId；把 issue 分支推送到 origin，用 gh 创建以记录的 main/master 为 base 的 PR，PR 正文内嵌验证产物与截图，把 PR 链接发到 issue comments 并改 Done；不合并 PR、不推送主分支。目标主分支相较 validatedBaseSha 已前进且尚未推送时返回 needs_validation，由 watcher 再次调度 validate；此阶段不重写或重新验证代码，也不清理 worktree、分支或 Herdr workspace（watcher 读回验证后统一收尾）。",
+  pr: "读取上一阶段 validate 的 commit、validatedBaseSha、validationCommentId；把 issue 分支推送到 origin，用 gh 创建以记录的 main/master 为 base 的 PR，PR 正文内嵌验证产物与截图，把 PR 链接发到 issue comments 并改 Done；不合并 PR、不推送主分支。目标主分支相较 validatedBaseSha 已前进且尚未推送时返回 needs_validation，由 watcher 再次调度 validate；此阶段不重写或重新验证代码。agent 与 watcher 均不得清理 issue worktree、本地分支或 Herdr workspace，全部保留给用户手动清理；在 summary 中给出 worktree 绝对路径和分支名。",
 };
 
 export function parseStageResult(value: any, stage: Stage, issueId: string): StageResult {
