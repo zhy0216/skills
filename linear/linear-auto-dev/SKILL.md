@@ -5,11 +5,11 @@ description: 实现复杂的 Linear issue：将分析方案保存为关联该 is
 
 # Linear Auto Dev
 
-沿用 `auto-dev` 的“分析 → plan → todos → 执行”流程，规划和进度的事实来源是同一个 Linear issue。plan 是通过 `issueId` 直接关联的 Document；todos 是原 description 内的 Markdown checklist。业务仓库无需新增 `plans/` 目录，也不依赖 Herdr。
+沿用 `auto-dev` 的“分析 → plan → todos → 执行”流程，规划和进度的事实来源是同一个 Linear issue。plan 是通过 `issueId` 直接关联的 Document；todos 是原 description 内的 Markdown checklist。业务仓库无需新增 `plans/` 目录；执行复用 finish-linear-todo 通过 Herdr 创建的 workspace、独立 worktree 和 agent。
 
 watcher 的 context 含 `stage` 时，先读取 [角色与阶段执行规则](../references/stages.md)，只完成当前阶段：`plan`、`todos` 使用 planner，`implement` 使用 executor；后续验证与开 PR 也归 executor。下一阶段由 orchestrator 决策，再由 watcher 按角色配置启动。下面“立即执行”“交回验证”描述完整流程模式，不要求当前阶段越过自己的范围。Codex 和 OpenCode 都遵循同样的 Linear 产物与交接约定。
 
-从 [../finish-linear-todo/SKILL.md](../finish-linear-todo/SKILL.md) 进入时，继续使用已创建的 issue worktree、started 状态和执行上下文。用户直接调用本 skill 时，先按 finish-linear-todo 的第 1 阶段建立上下文、worktree 和 started 状态，然后回到这里，不重复做复杂度判断。使用共用助手 [../scripts/linear-issue.ts](../scripts/linear-issue.ts)，按 [../references/linear-cli.md](../references/linear-cli.md) 读写 Linear。
+从 [../finish-linear-todo/SKILL.md](../finish-linear-todo/SKILL.md) 进入时，继续使用已创建的 issue worktree、started 状态和执行上下文。用户直接调用本 skill 且尚未位于派发的执行 pane 时，按 [手动 Herdr 派发](../references/manual-herdr.md) 启动执行 agent，在 context 记录 `entrySkill=linear-auto-dev`；当前调用者等待并复核，不在原 checkout 开始实施。执行 agent 按 finish-linear-todo 第 1 阶段核对既有上下文并领取 issue，随后回到这里规划和实现，不重复派发、不重复创建 worktree，也不重复做复杂度判断。使用共用助手 [../scripts/linear-issue.ts](../scripts/linear-issue.ts)，按 [../references/linear-cli.md](../references/linear-cli.md) 读写 Linear。
 
 ## 1. 分析并发布 plan
 
@@ -52,7 +52,7 @@ bun "$helper" todos "$issueId" --file "$tasksFile" --plan-url "$planUrl"
 
 plan 和任务队列发布后，在当前 issue worktree 立即开始实现，不停在规划阶段，也不调用原 auto-dev 去生成本地 plans 或另开无人等待的协调器。遵循依赖推进任务，完成实现与该任务验收后才勾选；同步 Linear description。实现偏离 plan 时，先更新同一 Document 和受影响的任务说明，再继续。
 
-默认按依赖顺序执行。当前环境支持 agent 委派、且存在可独立实现的工作时，可以并行分配这些子任务；每个写代码的子 agent 使用独立子 worktree，基于当前 issue 分支。执行偏好继承 context 的 `roleAgents.executor`，包括 agent、model、reasoningEffort 和 extraArgs；没有角色配置时沿用用户明确的执行偏好。提供明确输入、变更范围、依赖、验收和交付要求。子 agent 只提交并报告自己的实现与验证；executor 负责读回结果、按依赖合入 issue 分支、解决冲突、更新 Document/description。不要让子 agent 竞争修改 Linear 进度、issue 状态或原主分支。必须等所有已派发任务收尾后才能进行最终验证。
+默认按依赖顺序执行。存在可独立实现且适合并行的工作时，可以通过 Herdr 派发这些子任务；每个写代码的子 agent 使用 Herdr 创建的独立子 worktree，基于当前 issue 分支。执行偏好继承 context 的 `roleAgents.executor` 或手动派发的 `agentConfig`，包括 agent、model、reasoningEffort 和 extraArgs。提供明确输入、变更范围、依赖、验收和交付要求；子任务不再次调用完整 issue 派发入口。子 agent 只提交并报告自己的实现与验证；executor 负责读回结果、按依赖合入 issue 分支、解决冲突、更新 Document/description。不要让子 agent 竞争修改 Linear 进度、issue 状态或原主分支。必须等所有已派发任务收尾后才能进行最终验证。
 
 出现新前置依赖时修改任务队列；出现阻塞时记录已完成项、具体原因及解除条件，保留未完成 checkbox。修正 bug 后按影响范围重验，不用“子任务已提交”替代整体用户结果验证。
 

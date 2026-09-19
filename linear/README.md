@@ -21,6 +21,7 @@ linear/
 ├── schemas/orchestrator-result.json
 ├── references/linear-cli.md
 ├── references/stages.md
+├── references/manual-herdr.md
 ├── references/creation.md
 └── linear-watch.example.json
 scripts/linear-watch.ts
@@ -30,6 +31,12 @@ scripts/config.opencode.example.json
 ```
 
 运行需要 Bun（本机验证版本 1.4.2，必须提供原生 `Bun.cron`）、已认证的 `linear-cli`、Git、已认证的 GitHub CLI `gh`（目标仓库须有可推送的 GitHub `origin` 远端）、一个正在运行的 Herdr session，以及配置中实际使用的 Codex CLI 或 OpenCode CLI（由 Herdr pane 的 shell 在 PATH 中解析；配置里写 `codexBin`/`opencodeBin` 时其目录会被注入 pane PATH）。本机核对的 CLI 版本为 Codex 0.153.4、OpenCode 1.18.29、Herdr 以 `herdr --version` 为准；运行时没有 npm 依赖。参阅 [Bun cron 文档](https://bun.com/docs/runtime/cron) 和 [Codex skills 文档](https://learn.chatgpt.com/docs/build-skills)。
+
+## 手动完成单条 issue
+
+在 Herdr pane 中调用 `$finish-linear-todo ISSUE` 并指定目标仓库，调用者通过 `herdr worktree create` 创建独立 worktree 与 workspace，再在其中的专用 pane 启动 Codex/OpenCode agent。调用者留在原 checkout 等待并复核；执行 agent 完成实现、验证、推送和开 PR。直接调用 `$linear-auto-dev ISSUE` 也使用相同入口，并要求先完成 Linear plan 和任务队列。具体上下文、恢复和结果核对见 [手动 Herdr 派发](references/manual-herdr.md)。
+
+手动与 watcher 两种入口都保留 worktree、workspace 和分支，交给用户检查和手动清理。手动调用需要 `HERDR_ENV=1`，Herdr 不可用时报告阻塞，不回退到原 checkout 实现。
 
 ## 配置并运行
 
