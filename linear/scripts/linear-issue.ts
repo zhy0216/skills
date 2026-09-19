@@ -5,6 +5,14 @@ import { LinearClient, type Issue } from "./linear-client";
 
 export const TODO_HEADING = "## Implementation tasks (linear-auto-dev)";
 
+export async function listTodoIssues(client: LinearClient, state = "Todo") {
+  const expected = state.toLowerCase();
+  const issues = (await client.todoIssues()).filter((issue) => !issue.archivedAt && issue.state.type === "unstarted"
+    && [issue.state.id, issue.state.name].some((value) => value.toLowerCase() === expected));
+  return [...new Map(issues.map((issue) => [issue.id, issue])).values()]
+    .sort((a, b) => (a.priority || 5) - (b.priority || 5) || a.createdAt.localeCompare(b.createdAt) || a.identifier.localeCompare(b.identifier));
+}
+
 function sectionHeadings(markdown: string) {
   const headings: { text: string; index: number; end: number }[] = [];
   let fence: { character: string; length: number } | undefined;
@@ -143,10 +151,16 @@ export async function main(args = Bun.argv.slice(2)) {
     artifact: { type: "string", multiple: true }, state: { type: "string" }, help: { type: "boolean" },
   } });
   if (values.help) {
+    console.log("bun linear/scripts/linear-issue.ts list-todo [--state NAME_OR_ID]");
     console.log("bun linear/scripts/linear-issue.ts get|start|done|plan|todos|comment ISSUE [--file FILE] [--plan-url URL] [--key KEY] [--artifact FILE ...] [--state NAME_OR_ID]");
     return;
   }
   const [action, id] = positionals;
+  if (action === "list-todo") {
+    if (positionals.length !== 1) throw new Error("list-todo does not accept an issue ID; use --help");
+    console.log(JSON.stringify(await listTodoIssues(new LinearClient(), values.state), null, 2));
+    return;
+  }
   if (!id || positionals.length !== 2) throw new Error("Provide an action and one issue ID; use --help");
   const client = new LinearClient();
   let result: unknown;

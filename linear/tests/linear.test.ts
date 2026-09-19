@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { command, LinearClient, type Issue } from "../scripts/linear-client";
 import { countActiveAgents, makeHerdr, MAX_ACTIVE_AGENTS } from "../scripts/agents";
-import { publishComment, publishPlan, publishTodos, replaceTodoSection, TODO_HEADING, transition } from "../scripts/linear-issue";
+import { listTodoIssues, publishComment, publishPlan, publishTodos, replaceTodoSection, TODO_HEADING, transition } from "../scripts/linear-issue";
 import { acquireLock, cronWorkerSource, git, loadConfig, matchesRoute, resolveBaseBranch, runOnce, SCHEDULE, type Config } from "../../scripts/linear-watch";
 
 const temporary: string[] = [];
@@ -79,6 +79,64 @@ function invocations(root: string) {
 }
 
 describe("Linear content and API", () => {
+  test("list-todo CLI reads every page across teams, deduplicates and excludes other states without mutations", async () => {
+    const todos = Array.from({ length: 105 }, (_, index) => makeIssue({
+      identifier: `ENG-${index + 1}`,
+      ...(index === 104 ? { identifier: "OPS-1", team: { id: "ops-team", key: "OPS", name: "Operations" }, project: { id: "ops-project", name: "Operations" } } : {}),
+    }));
+    const s = await setup([...todos, todos[0]!,
+      makeIssue({ state: { id: "ready", name: "Ready", type: "unstarted" } }),
+      makeIssue({ state: { id: "backlog", name: "Backlog", type: "backlog" } }),
+      makeIssue({ state: { id: "started", name: "In Progress", type: "started" } }),
+      makeIssue({ state: { id: "done", name: "Done", type: "completed" } }),
+      makeIssue({ state: { id: "wrong-type", name: "Todo", type: "started" } }),
+      makeIssue({ archivedAt: "2026-09-08T00:00:00Z" }),
+    ], { pageSize: 40 });
+    const before = await s.state();
+    const output = await command([process.execPath, resolve(import.meta.dir, "../scripts/linear-issue.ts"), "list-todo"], {
+      env: { ...process.env, LINEAR_CLI_BIN: s.client.binary, LINEAR_CLI_PROFILE: "test-profile" },
+    });
+    const issues: Issue[] = JSON.parse(output);
+    expect(issues).toHaveLength(105);
+    expect(issues.map((issue) => issue.id).sort()).toEqual(todos.map((issue) => issue.id).sort());
+    expect(await s.state()).toEqual(before);
+    expect(s.calls()).toHaveLength(3);
+    expect(s.calls().every((call) => call.operation === "LinearWatchTodos" && call.args.includes("--no-cache") && call.args.includes("test-profile"))).toBe(true);
+  });
+
+  test("list-todo supports a custom state name or ID and returns an empty array when nothing matches", async () => {
+    const ready = makeIssue({ identifier: "ENG-2", state: { id: "ready-id", name: "Ready for development", type: "unstarted" } });
+    const s = await setup([makeIssue(), ready]);
+    for (const [state, expected] of [["ready FOR development", [ready]], ["ready-id", [ready]], ["Missing", []]] as const) {
+      const output = await command([process.execPath, resolve(import.meta.dir, "../scripts/linear-issue.ts"), "list-todo", "--state", state], {
+        env: { ...process.env, LINEAR_CLI_BIN: s.client.binary },
+      });
+      expect(JSON.parse(output)).toEqual(expected);
+    }
+  });
+
+  test("lists Todo by priority and creation time with unprioritized issues last", async () => {
+    const s = await setup([
+      makeIssue({ identifier: "ENG-1", priority: 0 }),
+      makeIssue({ identifier: "ENG-2", createdAt: "2026-09-09T00:00:00Z" }),
+      makeIssue({ identifier: "ENG-3" }),
+      makeIssue({ identifier: "ENG-4", priority: 1 }),
+      makeIssue({ identifier: "ENG-5", createdAt: "2026-09-07T00:00:00Z", state: { id: "todo", name: "todo", type: "unstarted" } }),
+    ]);
+    expect((await listTodoIssues(s.client)).map((issue) => issue.identifier)).toEqual(["ENG-4", "ENG-5", "ENG-3", "ENG-2", "ENG-1"]);
+  });
+
+  test("list-todo propagates query errors and keeps single-issue commands explicit", async () => {
+    const s = await setup(undefined, { errorsOn: "LinearWatchTodos" });
+    const cli = (args: string[]) => command([process.execPath, resolve(import.meta.dir, "../scripts/linear-issue.ts"), ...args], {
+      env: { ...process.env, LINEAR_CLI_BIN: s.client.binary },
+    });
+    await expect(cli(["list-todo"])).rejects.toThrow("simulated GraphQL failure");
+    await expect(cli(["list-todo", "ENG-1"])).rejects.toThrow("does not accept an issue ID");
+    await expect(cli(["get"])).rejects.toThrow("one issue ID");
+    expect(JSON.parse(await cli(["get", "ENG-1"])).id).toBe(s.issues[0]!.id);
+  });
+
   test("paginates without a result cap and fails on repeated cursors", async () => {
     const s = await setup([makeIssue(), makeIssue({ identifier: "ENG-2" }), makeIssue({ identifier: "ENG-3" })]);
     expect((await s.client.todoIssues()).map((i) => i.identifier)).toEqual(["ENG-1", "ENG-2", "ENG-3"]);

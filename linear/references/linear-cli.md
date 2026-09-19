@@ -12,9 +12,15 @@ linear-cli --output json --no-cache --all statuses list --team ENG
 linear-cli --output json --no-cache --all comments list ENG-123
 linear-cli --output json --no-cache --all relations list ENG-123
 bun /absolute/path/to/linear/scripts/linear-issue.ts get ENG-123
+
+# 未提供 issue ID 时拉取全部 Todo；只读，不领取、不派发。
+bun "$helper" list-todo
+bun "$helper" list-todo --state "Ready for development"
 ```
 
 共用助手返回 issue UUID、真实状态、Team、Project、description。watcher 通过 `api query` 分页取出全部 `unstarted` issues，再严格匹配路由的 Todo 名称/ID；它不会把同类型的其他状态当作 Todo。所有查询关闭缓存，领取前再次读回。
+
+`list-todo` 复用同一分页查询，返回当前 workspace/profile 下所有 Team/Project 的匹配 issue JSON 数组，按 UUID 去重并按优先级、创建时间、标识排序；未设置优先级的排在最后。只匹配未归档的 `unstarted` issue，状态名称默认 `Todo`，`--state` 可指定实际名称或 ID（不区分大小写）。它不截断结果，也不自动读取 watcher 的路由配置；需要限定 Team/Project 时按返回字段筛选。无匹配时返回 `[]`，查询错误以非零状态退出。
 
 ## 写入
 
