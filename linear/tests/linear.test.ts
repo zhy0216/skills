@@ -9,6 +9,7 @@ import { acquireLock, cronWorkerSource, git, loadConfig, matchesRoute, resolveBa
 
 const temporary: string[] = [];
 const previousEnv = process.env.LINEAR_TEST_STATE;
+const reviewState = { id: "review", name: "In Review", type: "started" };
 afterEach(() => {
   if (previousEnv === undefined) delete process.env.LINEAR_TEST_STATE; else process.env.LINEAR_TEST_STATE = previousEnv;
   for (const path of temporary.splice(0)) rmSync(path, { recursive: true, force: true });
@@ -201,6 +202,30 @@ describe("Linear content and API", () => {
     expect((await transition(s.client, s.issues[0]!.id, "completed")).state.id).toBe("c");
   });
 
+  test("review CLI moves the issue to In Review without marking it completed", async () => {
+    const s = await setup();
+    const output = await command([process.execPath, resolve(import.meta.dir, "../scripts/linear-issue.ts"), "review", "ENG-1"], {
+      env: { ...process.env, LINEAR_CLI_BIN: s.client.binary },
+    });
+    expect(JSON.parse(output).state).toEqual(reviewState);
+    expect((await s.state()).issues[0].state).toEqual(reviewState);
+    expect(s.calls().filter((call) => call.operation === "LinearIssueUpdate").map((call) => call.variables.input.stateId)).toEqual(["review"]);
+  });
+
+  test("review CLI refuses a missing review state and completed state overrides without mutations", async () => {
+    const s = await setup(undefined, { states: [
+      { id: "started", name: "In Progress", type: "started" },
+      { id: "completed", name: "Done", type: "completed" },
+    ] });
+    for (const args of [[], ["--state", "Done"], ["--state", "completed"]]) {
+      await expect(command([process.execPath, resolve(import.meta.dir, "../scripts/linear-issue.ts"), "review", "ENG-1", ...args], {
+        env: { ...process.env, LINEAR_CLI_BIN: s.client.binary },
+      })).rejects.toThrow("Cannot uniquely resolve started state");
+    }
+    expect((await s.state()).issues[0].state.name).toBe("Todo");
+    expect(s.calls().some((call) => call.operation === "LinearIssueUpdate")).toBe(false);
+  });
+
   test("uploads real bytes with signed headers and reuses the same comment key", async () => {
     let uploads = 0;
     let bytes = "";
@@ -273,7 +298,7 @@ describe("watcher and Git integration", () => {
     const summary = JSON.parse(output.split("\n").at(-1)!);
     expect(summary.completed).toBe(1); expect(summary.skipped).toBe(1); expect(summary.failed).toBe(0);
     const state = await s.state();
-    expect(state.issues.find((issue: Issue) => issue.id === picked.id).state.type).toBe("completed");
+    expect(state.issues.find((issue: Issue) => issue.id === picked.id).state).toEqual(reviewState);
     expect(state.issues.find((issue: Issue) => issue.id === later.id).state.name).toBe("Todo");
     expect(readdirSync(join(s.root, "logs/runs"))).toHaveLength(1);
   }, 10_000);
@@ -305,7 +330,8 @@ describe("watcher and Git integration", () => {
       expect(await remoteHead(repo, invocation.context.branch)).toBe(verified.commit);
       // The local base branch is never merged or pushed by the PR flow.
       expect(await git(repo, "rev-list", "--count", base)).toBe("1");
-      expect((await s.state()).issues[0].state.type).toBe("completed");
+      expect((await s.state()).issues[0].state).toEqual(reviewState);
+      expect(s.calls().filter((call) => call.operation === "LinearIssueUpdate" && call.variables.input.stateId).map((call) => call.variables.input.stateId)).toEqual(["started", "review"]);
       expect((await s.state()).comments[0].body).toContain(verified.commit);
       expect((await s.state()).comments.some((comment: any) => comment.body.includes(verified.prUrl))).toBe(true);
       expect(existsSync(join(repo, ".git/linear-watch.lock"))).toBe(false);
@@ -322,6 +348,38 @@ describe("watcher and Git integration", () => {
     }, 15_000);
   }
 
+  for (const inReviewState of ["awaiting REVIEW", "review-id"]) {
+    test(`uses a custom review state ${inReviewState} throughout dispatch and final verification`, async () => {
+      const expected = { id: "review-id", name: "Awaiting review", type: "started" };
+      const s = await setup(undefined, { states: [
+        { id: "started", name: "In Progress", type: "started" }, expected,
+        { id: "completed", name: "Done", type: "completed" },
+      ] });
+      await initRepo(s.root);
+      const config = await s.config({ routes: [{ repo: "repo", team: "ENG", inReviewState }] });
+      expect((await runOnce(config)).completed).toBe(1);
+      expect((await s.state()).issues[0].state).toEqual(expected);
+      expect(invocations(s.root).at(-1).context.inReviewState).toBe(inReviewState);
+      expect(existsSync(join(runPath(s.root), "verified.json"))).toBe(true);
+    }, 15_000);
+  }
+
+  for (const flag of ["prStateOverride", "finalStateOverride"]) {
+    for (const state of [
+      { id: "started", name: "In Progress", type: "started" },
+      { id: "completed", name: "Done", type: "completed" },
+    ]) {
+      test(`rejects ${state.name} during ${flag === "prStateOverride" ? "PR handoff" : "final readback"}`, async () => {
+        const s = await setup(undefined, { [flag]: state }); await initRepo(s.root);
+        const result = await runOnce(await s.config());
+        expect(result.failed).toBe(1); expect(result.completed).toBe(0);
+        expect((await s.state()).issues[0].state).toEqual(state);
+        expect((await Bun.file(join(runPath(s.root), "failure.json")).json()).error).toContain("In Review");
+        expect(existsSync(join(runPath(s.root), "verified.json"))).toBe(false);
+      }, 15_000);
+    }
+  }
+
   test("rechecks status just before dispatch and skips an issue already claimed", async () => {
     const issue = makeIssue(); const s = await setup([issue], { changeBeforeClaim: issue.id }); await initRepo(s.root);
     const result = await runOnce(await s.config());
@@ -335,7 +393,7 @@ describe("watcher and Git integration", () => {
     const result = await runOnce(await s.config());
     expect(result.failed).toBe(1); expect(result.completed).toBe(1);
     expect((await s.state()).issues[0].state.name).toBe("Todo");
-    expect((await s.state()).issues[1].state.type).toBe("completed");
+    expect((await s.state()).issues[1].state).toEqual(reviewState);
   }, 15_000);
 
   test("does not accept exit zero with no structured result", async () => {
@@ -441,7 +499,7 @@ describe("watcher and Git integration", () => {
     const worker = join(s.root, "worker.ts");
     await Bun.write(worker, cronWorkerSource(s.configPath, config));
     await command([process.execPath, "run", "--cron-title=linear-test", `--cron-period=${SCHEDULE}`, worker], { cwd: tmpdir() });
-    expect((await s.state()).issues[0].state.type).toBe("completed");
+    expect((await s.state()).issues[0].state).toEqual(reviewState);
     expect(readdirSync(join(s.root, "logs/runs"))).toHaveLength(1);
     expect(invocations(s.root).every((run) => run.context.agentConfig.agent === "opencode")).toBe(true);
   }, 15_000);

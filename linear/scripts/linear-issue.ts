@@ -84,6 +84,11 @@ export async function publishTodos(client: LinearClient, id: string, tasks: stri
   return { id: saved.id, url: saved.url };
 }
 
+export function isInReview(state: Issue["state"], name = "In Review") {
+  return state.type === "started"
+    && [state.id, state.name].some((value) => value.toLowerCase() === name.toLowerCase());
+}
+
 export async function transition(client: LinearClient, id: string, type: "started" | "completed", name?: string) {
   const issue = await client.issue(id);
   const states = await client.pages<{ id: string; name: string; type: string }>(`query LinearWorkflowStates($team: ID!, $after: String) {
@@ -152,7 +157,7 @@ export async function main(args = Bun.argv.slice(2)) {
   } });
   if (values.help) {
     console.log("bun linear/scripts/linear-issue.ts list-todo [--state NAME_OR_ID]");
-    console.log("bun linear/scripts/linear-issue.ts get|start|done|plan|todos|comment ISSUE [--file FILE] [--plan-url URL] [--key KEY] [--artifact FILE ...] [--state NAME_OR_ID]");
+    console.log("bun linear/scripts/linear-issue.ts get|start|review|done|plan|todos|comment ISSUE [--file FILE] [--plan-url URL] [--key KEY] [--artifact FILE ...] [--state NAME_OR_ID]");
     return;
   }
   const [action, id] = positionals;
@@ -165,6 +170,7 @@ export async function main(args = Bun.argv.slice(2)) {
   const client = new LinearClient();
   let result: unknown;
   if (action === "get") result = await client.issue(id);
+  else if (action === "review") result = await transition(client, id, "started", values.state ?? "In Review");
   else if (action === "start" || action === "done") result = await transition(client, id, action === "start" ? "started" : "completed", values.state);
   else {
     if (!values.file) throw new Error("--file is required");

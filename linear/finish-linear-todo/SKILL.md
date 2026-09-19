@@ -1,13 +1,13 @@
 ---
 name: finish-linear-todo
-description: 完成一个指定的 Linear Todo issue：通过 Herdr 创建独立 Git worktree 并启动执行 agent，按复杂度实现或调用 linear-auto-dev，将验证产物发到 issue comments，推送 issue 分支并开 PR，再标记 Done，保留 worktree 供用户检查。适用于用户要求处理 Linear 待办，或 linear-watch 派发单条 issue。
+description: 完成一个指定的 Linear Todo issue：通过 Herdr 创建独立 Git worktree 并启动执行 agent，按复杂度实现或调用 linear-auto-dev，将验证产物发到 issue comments，推送 issue 分支并开 PR，再设为 In Review 等待评审，保留 worktree 供用户检查。适用于用户要求处理 Linear 待办，或 linear-watch 派发单条 issue。
 ---
 
 # Finish Linear Todo
 
-将一个明确的 Linear issue 从 Todo 推进到已验证、已开出 PR。使用 `linear-cli`，沿用当前认证和 workspace profile。调用本 skill 或收到 watcher 派发即授权本条 issue 的实现、文档、description、comments、状态更新、提交、推送 issue 分支与开 PR；持续执行，不在规划后停下等确认。用户另有明确限制时遵守该限制。不合回主分支、不合并 PR：合入由人工评审决定。
+将一个明确的 Linear issue 从 Todo 推进到已验证、已开出 PR，并停在 In Review 等待评审。本流程不将 issue 改为 Done 或任何 `completed` 状态。使用 `linear-cli`，沿用当前认证和 workspace profile。调用本 skill 或收到 watcher 派发即授权本条 issue 的实现、文档、description、comments、状态更新、提交、推送 issue 分支与开 PR；持续执行，不在规划后停下等确认。用户另有明确限制时遵守该限制。不合回主分支、不合并 PR：合入由人工评审决定。
 
-**必须保留 issue worktree，禁止自动删除。无论手动调用还是 watcher 派发，清理都由用户自行执行；任务完成、PR 打开或合并、Linear Done 均不代表获准清理。**
+**必须保留 issue worktree，禁止自动删除。无论手动调用还是 watcher 派发，清理都由用户自行执行；任务完成、PR 打开或合并、Linear 状态变化均不代表获准清理。**
 
 **两种入口都通过 Herdr 执行。** 手动调用者负责创建 issue workspace/worktree、启动执行 agent 并复核结果；代码实现、验证、推送和开 PR 都由该 worktree 中的 agent 完成。不能只创建 Git worktree 后在原会话直接实现。
 
@@ -54,7 +54,7 @@ description: 完成一个指定的 Linear Todo issue：通过 Herdr 创建独立
 
 - issue、实现结果、完整 commit SHA、原主分支及 `validatedBaseSha`。
 - 每项验收的结果、真实执行命令、退出码；必要的关键输出或截图说明。
-- 验证局限、跳过项与原因。存在影响验收的未通过项时不要开 PR 或标记 Done。
+- 验证局限、跳过项与原因。存在影响验收的未通过项时保持 In Progress，不开 PR 或转入 In Review。
 
 使用助手发布评论，把产物作为实际 Linear 文件上传并链接到评论。小型纯文本输出可以直接包含在评论里；需要分享的截图、日志或报告用 `--artifact`，不能用本地路径冒充上传链接：
 
@@ -86,16 +86,16 @@ gh pr create --base "$baseBranch" --head "$branch" \
 
 PR 正文用 Markdown 文件准备，至少包含：issue 链接与实现结果、完整 commit SHA、base 分支及 `validatedBaseSha`、每项验收的结果与真实命令退出码、验证局限。验证产物必须放上 PR：把第 3 阶段上传的 asset URL 内嵌进正文——截图等图片用 `![名称](assetUrl)` 直接渲染，日志、报告等非图片产物用链接；同时链接 Linear 验证评论。不能只用本地路径或省略产物。该分支已有 PR 时用 `gh pr edit`/`gh pr comment` 更新同一 PR，不重复创建。读回返回的 PR URL，用 `gh pr view` 核对 base、head 和 diff 范围，保存 `prUrl`。
 
-PR 打开后不合并、不改动主分支，把 PR 留给人工评审。在 issue comments 发布 PR 收尾评论（含 `prUrl`、实际 commit、验证评论链接，可用第 3 阶段的 markdown 与 key 约定），再运行助手 `done ISSUE`（自定义状态传 `--state`）并读回 `completed`。若评论或状态更新失败，记录“PR 已开、Linear 收尾失败”，恢复时只补全收尾，不能再次实现或推送同一个任务。
+PR 打开后不合并、不改动主分支，把 PR 留给人工评审。在 issue comments 发布 PR 收尾评论（含 `prUrl`、实际 commit、验证评论链接，可用第 3 阶段的 markdown 与 key 约定），再运行助手 `review ISSUE`，默认设为 `In Review`；context 的 `inReviewState` 指定自定义状态名称或 ID 时通过 `--state` 传入。读回必须匹配该具体状态且类型为 `started`，不能只核对 `started` 类型。找不到约定的评审状态时记录具体阻塞，不回退到 In Progress 或 Done，也不使用旧 context 的 `doneState`。若评论或状态更新失败，记录“PR 已开、Linear 收尾失败”，保留实际状态，恢复时只补全收尾，不能再次实现或推送同一个任务。
 
 确认推送、PR 和 Linear 收尾完成后，保留 issue worktree、本地分支、关联 Herdr workspace，以及 runDir 中的日志与上下文，交给用户检查和手动清理。agent 与 watcher 均不得执行 `git worktree remove`、删除 worktree 目录或本地 issue 分支，也不得关闭关联 Herdr workspace。watcher 仍会结束已完成阶段的 agent pane 并释放运行锁。手动调用遵循同样的保留规则，即使工作树干净也不清理；失败、冲突、有未提交内容时同样保留现场。
 
-完整流程结束时返回 issue 链接、PR 链接、实际 commit、验证评论链接，以及保留的 worktree 绝对路径和本地分支名，注明“worktree 已保留，由用户手动清理”；只有验证产物发布、issue 分支推送到 origin、PR 打开且包含验证产物、Linear Done 全部确认后才声明 issue 已完成。PR 的合并由人工评审决定，本 skill 不合回主分支。watcher 调用按 context 的 `stageSchemaPath` 返回本轮协调决策或当前阶段结果，在 summary 中说明保留位置；executor 完成开 PR 后，由 orchestrator 审阅收尾，watcher 读回验证最终结果。
+完整流程结束时返回 issue 链接、PR 链接、实际 commit、验证评论链接，以及保留的 worktree 绝对路径和本地分支名，注明“worktree 已保留，由用户手动清理”；只有验证产物发布、issue 分支推送到 origin、PR 打开且包含验证产物、Linear In Review 全部确认后才声明“开发流程完成，PR 等待评审”。结果中的 `outcome=completed` 只表示本次执行完成，不表示 Linear issue 已 Done。PR 的合并由人工评审决定，本 skill 不合回主分支。watcher 调用按 context 的 `stageSchemaPath` 返回本轮协调决策或当前阶段结果，在 summary 中说明保留位置；executor 完成开 PR 后，由 orchestrator 审阅收尾，watcher 读回验证最终结果。
 
 手动派发的执行 agent 将符合 context 的 `resultSchemaPath` 的 JSON 写入 `resultPath`，并作为最终回答；summary 包含上述链接、保留位置和验证结果。调用者读取结果文件并独立核对后向用户汇报，不以 Herdr 的 idle/done 状态代替验收。
 
 ## 失败与恢复
 
-正常错误只在有新证据或修正后重试；不循环领取同一失败 issue。已经开始的 issue 保留 In Progress，并发布具体失败/阻塞评论，附 runId、当前分支、worktree、日志位置和恢复步骤。未开始的任务保留 Todo。watcher 的硬超时或进程崩溃可能来不及写评论，此时从 runDir 恢复，不把进程退出当作成功。
+正常错误只在有新证据或修正后重试；不循环领取同一失败 issue。已经开始但尚未转入评审的 issue 保留 In Progress；已进入 In Review 的保留该状态，不因收尾失败退回 In Progress。发布具体失败/阻塞评论，附 runId、当前分支、worktree、日志位置和恢复步骤。未开始的任务保留 Todo。watcher 的硬超时或进程崩溃可能来不及写评论，此时从 runDir 恢复，不把进程退出当作成功。
 
 watcher 持有本机 issue 与仓库锁并顺序派发。不要在执行过程中删除它的锁、再启动同 issue 的 watcher，或让子任务直接改原主分支。手动并发执行也应先检查这些锁和已有上下文。跨机器没有分布式领取保证，同一范围只运行一个调度器。

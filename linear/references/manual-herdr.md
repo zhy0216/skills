@@ -14,6 +14,7 @@
 
 - `launchMode: "manual"`、`role: "executor"`；**不设置 `stage`**，表示执行完整 issue 流程。
 - `entrySkill`：`finish-linear-todo` 或 `linear-auto-dev`，后者必须先规划、拆任务再实现。
+- `inReviewState`：开 PR 后的评审状态名称或 ID，默认 `In Review`，类型必须为 `started`；不使用旧字段 `doneState`。
 - `agentConfig`、`agentName`、`paneId`；agent 名使用唯一且符合 `[a-z][a-z0-9_-]{0,31}` 的短名称。
 - `skill`：finish-linear-todo/SKILL.md 的绝对路径；`helper`：共用 linear-issue.ts 的绝对路径。
 - `resultPath`：`runDir/result.json`；`resultSchemaPath`：[finish-result.json](../schemas/finish-result.json) 的绝对路径。
@@ -53,7 +54,7 @@ herdr agent start "$agentName" --kind "$agentKind" --pane "$paneId"
 这是 launchMode=manual、role=executor、没有 stage 的完整流程。
 核对当前 pane、worktree、仓库和分支与 context 一致，复用现有 workspace/worktree；
 不要再次派发本 issue，也不要修改原 checkout。
-按 skill 完成领取、实现、验证、发布产物、推送 issue 分支、开 PR 和 Linear 收尾。
+按 skill 完成领取、实现、验证、发布产物、推送 issue 分支、开 PR，并将 Linear 设为 inReviewState（默认 In Review），不改 Done。
 entrySkill=linear-auto-dev 时，先完成 Linear plan 和任务队列。
 将符合 resultSchemaPath 的结果 JSON 写入 resultPath，并作为最终回答。
 成功或失败都保留 worktree、分支和 workspace，不合并 PR，不自行关闭执行 pane。
@@ -67,8 +68,8 @@ entrySkill=linear-auto-dev 时，先完成 Linear plan 和任务队列。
 
 agent 结束后读取 `resultPath`，按 schema 核对 issue、outcome 和交付字段。缺结果时可向同一 agent 补发一次仅写结果文件的提醒；仍缺失则报告未完成并保留现场。确认前一次执行已结束、准备派发恢复或返工任务时，先将旧结果移到带时间标记的记录中，防止把上次结果当成本次交付。
 
-声明完成前，调用者独立核对 worktree 分支与 HEAD、干净状态、origin 上 issue 分支的 commit、PR 的 base/head/commit 与验证产物、Linear completed 状态以及属于该 issue 且包含 commit 的验证评论。发现具体缺口时交回同一 agent 修正；没有真实完成证据时不标记成功。
+声明开发流程完成前，调用者独立核对 worktree 分支与 HEAD、干净状态、origin 上 issue 分支的 commit、PR 的 base/head/commit 与验证产物、Linear 状态的名称或 ID 匹配 `inReviewState`（默认 In Review）且类型为 `started`，以及属于该 issue 且包含 commit 的验证评论。结果中的 `completed` 只表示本次执行完成，issue 留在 In Review 等待评审。发现具体缺口时交回同一 agent 修正；没有真实完成证据时不标记成功。
 
 记录结果后，只关闭本次创建且已结束工作的执行 pane；保留 root pane、Herdr workspace、worktree、本地和远程分支。失败时保留日志与上下文，不能因收尾失败重新实施或清理现场。
 
-明确恢复时复用原 `runId`、branch、worktree、base 和已发布产物。先核对运行锁和原 agent，仍在运行则继续监控；若 worktree 仍在而 workspace 已不存在，可用 `herdr worktree open --cwd "$repo" --path "$worktree" --label "$identifier" --no-focus` 打开已有工作树，读回并更新 workspace/rootPane，再启动新的执行 pane。worktree 缺失或来源不符时报告具体问题，不另建同 issue 分支。已有 PR 或 Linear 已完成时，只核对并补齐缺失的收尾。
+明确恢复时复用原 `runId`、branch、worktree、base 和已发布产物。先核对运行锁和原 agent，仍在运行则继续监控；若 worktree 仍在而 workspace 已不存在，可用 `herdr worktree open --cwd "$repo" --path "$worktree" --label "$identifier" --no-focus` 打开已有工作树，读回并更新 workspace/rootPane，再启动新的执行 pane。worktree 缺失或来源不符时报告具体问题，不另建同 issue 分支。已有 PR 或 Linear 已进入 In Review 时，只核对并补齐缺失的收尾。

@@ -72,11 +72,11 @@ switch (operation) {
   case "LinearIssueComments": data = { issue: { comments: page(state.comments.filter((c: any) => c.issueId === variables.id)) } }; break;
   case "LinearIssueDocuments": data = { issue: { documents: page(state.documents.filter((d: any) => d.issueId === variables.id)) } }; break;
   case "LinearWorkflowStates": data = { workflowStates: page(state.states ?? [
-    { id: "started", name: "In Progress", type: "started" }, { id: "completed", name: "Done", type: "completed" },
+    { id: "started", name: "In Progress", type: "started" }, { id: "review", name: "In Review", type: "started" }, { id: "completed", name: "Done", type: "completed" },
   ]) }; break;
   case "LinearIssueUpdate": {
     if (variables.input.stateId) {
-      const states = state.states ?? [{ id: "started", name: "In Progress", type: "started" }, { id: "completed", name: "Done", type: "completed" }];
+      const states = state.states ?? [{ id: "started", name: "In Progress", type: "started" }, { id: "review", name: "In Review", type: "started" }, { id: "completed", name: "Done", type: "completed" }];
       issue.state = states.find((s: any) => s.id === variables.input.stateId);
     }
     if (variables.input.description !== undefined) issue.description = variables.input.description;

@@ -5,7 +5,7 @@
       "team": "EZT",
       "todoState": "Todo",
       "inProgressState": "In Progress",
-      "doneState": "Done",
+      "inReviewState": "In Review",
       "prompt": "定期探索 eztodo 仓库中有证据的用户能力缺口。按用户任务和验收范围核对当前代码与已有 Linear issues，最多提交 15 个可独立验收的候选，必要前置项包含在额度内。没有可信缺口时返回空列表。"
     }
   ],

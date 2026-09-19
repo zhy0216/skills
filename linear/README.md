@@ -34,7 +34,7 @@ scripts/config.opencode.example.json
 
 ## 手动开发 issues
 
-在 Herdr pane 中调用 `$finish-linear-todo ISSUE` 并指定目标仓库，调用者通过 `herdr worktree create` 创建独立 worktree 与 workspace，再在其中的专用 pane 启动 Codex/OpenCode agent。调用者留在原 checkout 等待并复核；执行 agent 完成实现、验证、推送和开 PR。直接调用 `$linear-auto-dev ISSUE` 也使用相同入口，并要求先完成 Linear plan 和任务队列。具体上下文、恢复和结果核对见 [手动 Herdr 派发](references/manual-herdr.md)。
+在 Herdr pane 中调用 `$finish-linear-todo ISSUE` 并指定目标仓库，调用者通过 `herdr worktree create` 创建独立 worktree 与 workspace，再在其中的专用 pane 启动 Codex/OpenCode agent。调用者留在原 checkout 等待并复核；执行 agent 完成实现、验证、推送和开 PR，再将 Linear 设为 In Review 等待评审，不改 Done。直接调用 `$linear-auto-dev ISSUE` 也使用相同入口，并要求先完成 Linear plan 和任务队列。具体上下文、恢复和结果核对见 [手动 Herdr 派发](references/manual-herdr.md)。
 
 直接调用 `$linear-auto-dev` 且未提供 issue ID、也没有单条执行上下文时，会分页拉取当前 Linear workspace/profile 下全部 Todo issues，逐条进入相同的规划与开发流程。默认覆盖所有 Team/Project，用户指定范围时按范围筛选；每条分别确定仓库、创建 worktree 并核对结果。没有 Todo 时直接汇报；状态已变或已有活动运行的跳过，失败/阻塞项保留记录并继续其他可执行项。本轮处理拉取到的完整队列，不持续轮询。只需查看列表时可运行 `bun linear/scripts/linear-issue.ts list-todo`。
 
@@ -56,9 +56,9 @@ scripts/config.opencode.example.json
 }
 ```
 
-每条 route 至少提供 `team` 或 `project`；两者同时提供时都必须匹配，支持 Team key/name/UUID 和 Project name/UUID。不要设置重叠路由；同一个 issue 匹配多条会报告歧义并跳过。`todoState` 默认 `Todo`，可设置实际名称或 ID。`inProgressState`、`doneState` 可指定本 Team 的状态。`baseBranch` 可选 `main`/`master`；从 feature 分支启动且无法确定原主分支时应显式设置。
+每条 route 至少提供 `team` 或 `project`；两者同时提供时都必须匹配，支持 Team key/name/UUID 和 Project name/UUID。不要设置重叠路由；同一个 issue 匹配多条会报告歧义并跳过。`todoState` 默认 `Todo`，可设置实际名称或 ID。`inProgressState`、`inReviewState` 可指定本 Team 的状态名称或 ID。`inReviewState` 默认 `In Review`，必须属于 `started` 类型；收尾严格匹配具体名称或 ID，找不到时失败，不回退到 In Progress 或 Done。旧配置的 `doneState` 应替换为 `inReviewState`；该旧字段不再用于开发流程。`baseBranch` 可选 `main`/`master`；从 feature 分支启动且无法确定原主分支时应显式设置。
 
-可选顶层配置：`linearProfile`、`linearBin`、`codexBin`、`opencodeBin`、`herdrBin`、`herdrSocket`、`stateDir`、`defaults`、`agents`、`timeoutMinutes`、`maxActiveAgents`、`creation`。任务全部通过 Herdr 执行：每条 issue 用 `herdr worktree create` 建立独立 worktree 与 workspace，orchestrator/planner/executor 的每个阶段都在该 workspace 的专用 pane 里以交互式 agent 启动（Codex 带 YOLO 参数、OpenCode 带 `--auto`），一次一个，结束即关闭 pane；无论成功或失败，watcher 都保留 worktree、workspace 和本地分支，远程分支与 PR 也保留，全部交由用户验证后手动清理，任务完成、PR 打开或标记 Done 均不触发清理。`herdrSocket` 选择目标 session 的 socket（默认取 `HERDR_SOCKET_PATH`，否则 `~/.config/herdr/herdr.sock`，即 default session；命名 session 用其 `sessions/<name>/herdr.sock`）。`timeoutMinutes` 默认 720，是一条 issue 所有阶段共用的执行时限；允许任务跨过下一个四小时刻度，期间用锁防止重入。`maxActiveAgents` 默认 8，是整个 Herdr session 允许并存的活动 agent（`herdr agent list` 中状态非 `done`）上限；每次启动阶段 agent 前都会统计活动数，达到上限就退避轮询等待，直到有空位或超出 `timeoutMinutes`，因此等待也会占用该 issue 的执行时限。旧顶层 `model` 仍兼容，新配置请使用 `defaults.model`。
+可选顶层配置：`linearProfile`、`linearBin`、`codexBin`、`opencodeBin`、`herdrBin`、`herdrSocket`、`stateDir`、`defaults`、`agents`、`timeoutMinutes`、`maxActiveAgents`、`creation`。任务全部通过 Herdr 执行：每条 issue 用 `herdr worktree create` 建立独立 worktree 与 workspace，orchestrator/planner/executor 的每个阶段都在该 workspace 的专用 pane 里以交互式 agent 启动（Codex 带 YOLO 参数、OpenCode 带 `--auto`），一次一个，结束即关闭 pane；无论成功或失败，watcher 都保留 worktree、workspace 和本地分支，远程分支与 PR 也保留，全部交由用户验证后手动清理，任务完成、PR 打开或进入 In Review 均不触发清理。`herdrSocket` 选择目标 session 的 socket（默认取 `HERDR_SOCKET_PATH`，否则 `~/.config/herdr/herdr.sock`，即 default session；命名 session 用其 `sessions/<name>/herdr.sock`）。`timeoutMinutes` 默认 720，是一条 issue 所有阶段共用的执行时限；允许任务跨过下一个四小时刻度，期间用锁防止重入。`maxActiveAgents` 默认 8，是整个 Herdr session 允许并存的活动 agent（`herdr agent list` 中状态非 `done`）上限；每次启动阶段 agent 前都会统计活动数，达到上限就退避轮询等待，直到有空位或超出 `timeoutMinutes`，因此等待也会占用该 issue 的执行时限。旧顶层 `model` 仍兼容，新配置请使用 `defaults.model`。
 
 ### 角色的 agent 配置
 
@@ -202,13 +202,13 @@ creator 在记录的 main/master commit 的独立 worktree 中按 skill 探索�
 
 ## 开发模式的执行与恢复
 
-每轮先完成所有分页，再按 priority、创建时间顺序派发，issue 之间顺序执行；失败不会阻止本轮其他 issue。领取 issue 后 watcher 先用 `herdr worktree create` 建立独立 worktree 和 workspace。每次启动阶段 agent 前先执行活动数检查：`herdr agent list` 统计状态非 `done` 的 agent，达到 `maxActiveAgents`（默认 8）时以 0.5～15s 退避轮询，直到 session 空闲出位置才继续，等待计入该 issue 的 `timeoutMinutes`；多个 watcher 并发检查时瞬时可能短暂各超一个。简单任务执行 `analyze → implement → validate → pr`，复杂任务在 analyze 后增加 `plan → todos`。每次交接先运行一轮 orchestrator，它读取证据、选择下一阶段并给出指令；脚本使用所属角色的配置在该 workspace 的新 pane 中启动交互式 agent。各阶段通过同一个 worktree、Linear 产物和结构化上下文交接。最终验证产物发布到 comments 后，推送 issue 分支并创建以原 main/master 为 base 的 PR，验证产物（含截图）内嵌进 PR 正文，再标记 Done；成功与失败均不清理现场：watcher 保留 worktree、workspace、本地分支、远程分支与 PR，等待用户验证后自行清理。watcher 不合并 PR、不推送主分支。
+每轮先完成所有分页，再按 priority、创建时间顺序派发，issue 之间顺序执行；失败不会阻止本轮其他 issue。领取 issue 后 watcher 先用 `herdr worktree create` 建立独立 worktree 和 workspace。每次启动阶段 agent 前先执行活动数检查：`herdr agent list` 统计状态非 `done` 的 agent，达到 `maxActiveAgents`（默认 8）时以 0.5～15s 退避轮询，直到 session 空闲出位置才继续，等待计入该 issue 的 `timeoutMinutes`；多个 watcher 并发检查时瞬时可能短暂各超一个。简单任务执行 `analyze → implement → validate → pr`，复杂任务在 analyze 后增加 `plan → todos`。每次交接先运行一轮 orchestrator，它读取证据、选择下一阶段并给出指令；脚本使用所属角色的配置在该 workspace 的新 pane 中启动交互式 agent。各阶段通过同一个 worktree、Linear 产物和结构化上下文交接。最终验证产物发布到 comments 后，推送 issue 分支并创建以原 main/master 为 base 的 PR，验证产物（含截图）内嵌进 PR 正文，再设为 In Review 等待人工评审，不改 Done；成功与失败均不清理现场：watcher 保留 worktree、workspace、本地分支、远程分支与 PR，等待用户验证后自行清理。watcher 不合并 PR、不推送主分支。
 
 orchestrator 可以要求重新规划或返工；相关后续结果会失效，需要重新验证。主分支在验证后或开 PR 前前进时，协调流程再次派发 executor/validate 和 executor/pr。主分支变化累计三次导致验证失效时停止；一条 issue 最多运行 24 轮协调决策，超时或无进展时保留工作树和日志。
 
 默认日志位于 `$XDG_STATE_HOME/linear-watch` 或 `~/.local/state/linear-watch`。`watcher.jsonl` 是调度日志（因活动数等待时记录 `agent-capacity-wait`，含 `active`/`max`/已等待毫秒）；每条 issue 的 `runs/<issue>-<run-id>/context.json` 保存 worktree、Herdr workspace/pane、已解析的角色配置、阶段结果、执行历史和协调决策。每阶段的 `stages/<stage>-<attempt>/` 包含独立 `context.json`、`result.json` 和 `<agent 名>.tui.log`（agent 结束后抓取的 pane 转录）；`orchestrator/<turn>/` 同理保存每轮协调者的 context、决策 JSON 和转录。根目录的 `result.json` 是最终汇总，`verified.json` 是完成后的读回确认，`failure.json` 保存失败原因。
 
-退出码 0 不会自动算完成：watcher 在交接时读回 worktree、Document、checklist 和验证评论，最终再核对 issue 分支已推送到 origin 且指向返回的 commit、PR 链接已发到 issue、Linear 已 completed，且验证评论属于该 issue 并包含该 commit。
+退出码 0 不会自动算完成：watcher 在交接时读回 worktree、Document、checklist 和验证评论，最终再核对 issue 分支已推送到 origin 且指向返回的 commit、PR 链接已发到 issue、Linear 已进入配置的 In Review 状态（类型为 `started`），且验证评论属于该 issue 并包含该 commit。结果及计数中的 `completed` 表示本次开发流程交付成功，不表示 Linear issue 已 Done。
 
 仓库锁位于 Git common directory 的 `linear-watch.lock/`，issue 锁位于默认 state root 的 `locks/`（不随自定义日志目录变化）。锁 owner 记录当前 Herdr agent 名、paneId 和 workspaceId。SIGINT/SIGTERM 和超时会让 watcher 关闭正在运行的 worker pane（Herdr 随之回收 agent 进程），并保留日志、worktree 和 workspace。watcher 硬崩溃时其后的 agent 可能仍在 Herdr session 中运行；先 `herdr agent list` 和读 `owner.json` 核对，确认相关 pane 已消失后，再只移除对应失效锁目录。不要把仍运行的任务锁当作 stale lock。
 

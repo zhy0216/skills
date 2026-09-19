@@ -3,6 +3,7 @@ import { mkdirSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { digest, LinearClient, type Issue } from "../linear/scripts/linear-client";
+import { isInReview } from "../linear/scripts/linear-issue";
 import { AgentCleanupError, createHerdrWorktree, herdrPing, makeHerdr, resolveRoleAgents, MAX_ACTIVE_AGENTS, STAGE_ROLES, type Herdr, type AgentSettings, type RoleAgents } from "../linear/scripts/agents";
 import { runStages, type RunContext } from "../linear/scripts/stages";
 import { acquireLock, git, resolveBaseBranch, STATE_ROOT, DEFAULT_HERDR_SOCKET } from "../linear/scripts/watcher-runtime";
@@ -21,7 +22,7 @@ export type Route = {
   project?: string;
   todoState?: string;
   inProgressState?: string;
-  doneState?: string;
+  inReviewState?: string;
   backlogState?: string;
   prompt?: string;
   baseBranch?: "main" | "master";
@@ -49,7 +50,7 @@ export async function loadConfig(path: string, overrides: Pick<Config, "linearBi
   for (const key of stringKeys) if (config[key] !== undefined && (typeof config[key] !== "string" || !config[key]!.trim())) throw new Error(`Invalid config.${key}`);
   const routes = config.routes.map((route) => {
     if (!route || typeof route.repo !== "string" || !route.repo.trim() || (!route.team && !route.project)) throw new Error("Every route needs repo and at least one of team / project");
-    for (const key of ["team", "project", "todoState", "inProgressState", "doneState", "backlogState", "prompt"] as const) {
+    for (const key of ["team", "project", "todoState", "inProgressState", "inReviewState", "backlogState", "prompt"] as const) {
       if (route[key] !== undefined && (typeof route[key] !== "string" || !route[key]!.trim())) throw new Error(`Invalid route.${key}`);
     }
     if (route.baseBranch !== undefined && !["main", "master"].includes(route.baseBranch)) throw new Error("baseBranch must be main or master");
@@ -98,7 +99,7 @@ export function matchesRoute(issue: Issue, route: Route) {
     && (!route.project || !!issue.project && [issue.project.id, issue.project.name].some((value) => equal(value, route.project!)));
 }
 
-export async function verifyCompletion(client: LinearClient, issue: Issue, repo: string, base: string, branch: string, result: Result) {
+export async function verifyCompletion(client: LinearClient, issue: Issue, repo: string, base: string, branch: string, result: Result, inReviewState = "In Review") {
   if (!result || result.issueId !== issue.id || result.baseBranch !== base) throw new Error("Agent result does not match the dispatched issue and base branch");
   if (result.outcome !== "completed") throw new Error(`Agent reported ${result.outcome}: ${result.summary}`);
   if (!result.commit || !/^[0-9a-f]{40,64}$/.test(result.commit) || !result.validationCommentId) throw new Error("Completed result is missing a commit or validation comment");
@@ -108,7 +109,7 @@ export async function verifyCompletion(client: LinearClient, issue: Issue, repo:
   catch { throw new Error(`Could not read origin for ${repo}; the issue branch must be pushed for the pull request`); }
   if (remote.trim().split("\t")[0] !== result.commit) throw new Error(`Reported commit ${result.commit} was not pushed to origin/${branch}`);
   const saved = await client.issue(issue.id);
-  if (saved.state.type !== "completed") throw new Error("Agent exited successfully but the Linear issue is not completed");
+  if (!isInReview(saved.state, inReviewState)) throw new Error(`Agent exited successfully but the Linear issue is not in ${inReviewState} (started)`);
   const comment = (await client.comments(issue.id)).find((comment) => comment.id === result.validationCommentId);
   if (!comment?.body?.includes(result.commit)) throw new Error("Validation comment was not found on the issue or does not identify the verified commit");
   if (!(await client.comments(issue.id)).some((comment) => comment.body.includes(result.prUrl!))) throw new Error("Pull request link was not posted to the issue");
@@ -165,7 +166,7 @@ export async function runOnce(config: Runtime, options: { mode?: Mode; dryRun?: 
         runId, issueId: fresh.id, identifier: fresh.identifier, issueUrl: fresh.url, repo,
         baseBranch, baseSha, branch: herdrRun.branch, worktree: created.worktree, runDir,
         workspaceId: created.workspaceId, rootPane: created.rootPane,
-        inProgressState: route.inProgressState, doneState: route.doneState,
+        inProgressState: route.inProgressState, inReviewState: route.inReviewState ?? "In Review",
         todoState: route.todoState ?? "Todo", linearProfile: config.linearProfile,
         skill: join(SUITE, "finish-linear-todo/SKILL.md"), helper: join(SUITE, "scripts/linear-issue.ts"),
       };
@@ -184,7 +185,7 @@ export async function runOnce(config: Runtime, options: { mode?: Mode; dryRun?: 
         },
       });
       await Bun.write(join(runDir, "result.json"), JSON.stringify(result, null, 2));
-      await verifyCompletion(client, fresh, repo, baseBranch, context.branch, result);
+      await verifyCompletion(client, fresh, repo, baseBranch, context.branch, result, context.inReviewState);
       await Bun.write(join(runDir, "verified.json"), JSON.stringify({ ...result, verifiedAt: new Date().toISOString() }, null, 2));
       // Keep the issue worktree, branch, and workspace for the user's review and manual cleanup.
       log("worktree-preserved", { issue: fresh.identifier, workspaceId: context.workspaceId, worktree: context.worktree, branch: context.branch });

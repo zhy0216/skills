@@ -18,7 +18,7 @@ watcher 按三个角色选择 agent 配置；`orchestrator` 是独立运行的�
 
 - `allowedStages`：满足当前前置条件的下一阶段；`suggestedStage` 是正常推进方向。
 - `previousResults`、`stageHistory`、`orchestrationHistory`：当前有效产物、历史执行和协调决策；证据在各记录的 `resultPath` 及其相邻文件。
-- `reviewReason`：本轮需要关注的交接或主分支变化；`canComplete` 表示脚本已读回 executor 的 PR 与 Linear Done。
+- `reviewReason`：本轮需要关注的交接或主分支变化；`canComplete` 表示脚本已读回 executor 的 PR 与 Linear In Review（或 context 的 `inReviewState`，类型为 `started`）。
 
 从 `allowedStages` 选择下一阶段，写出具体 `instructions`，交给脚本使用 planner/executor 的配置派发。通常沿 suggestedStage 推进；发现有依据的缺口时，可以返回允许的 plan/todos/implement/validate 阶段补充或返工。返工会使该阶段及后续旧结果失效，需要重新完成相关交付和验证。原工作树、已提交的代码和 Linear 内容保留，使用已有产物继续修正。
 
@@ -36,7 +36,7 @@ watcher 按三个角色选择 agent 配置；`orchestrator` 是独立运行的�
 }
 ```
 
-`outcome` 为 dispatch/completed/blocked；后两种的 `nextStage` 必须为 null。模型返回决策后，本次 session 结束。脚本负责实际启动下一阶段，读回交付结果，再启动一轮 orchestrator；不要在当前 session 等待子任务。
+`outcome` 为 dispatch/completed/blocked；后两种的 `nextStage` 必须为 null。`completed` 表示本次开发流程已交付 PR，Linear issue 保持 In Review 等待人工评审，不改 Done。模型返回决策后，本次 session 结束。脚本负责实际启动下一阶段，读回交付结果，再启动一轮 orchestrator；不要在当前 session 等待子任务。
 
 ## Planner / Executor
 
@@ -49,7 +49,7 @@ context 同时包含 `role` 与 `stage` 时，只完成当前阶段。读取 `or
 | `todos` | planner | 将有编号、依赖、验收条件的 checklist 写入最新 description 的管理小节，保留用户内容和 plan 链接。 |
 | `implement` | executor | 在同一个 issue worktree 内实现并提交，做必要开发验证；复杂任务同步 description 的进度。返回 HEAD commit，保持工作树干净。返工时修正已有实现。 |
 | `validate` | executor | 集成原 main/master 的最新提交，运行最终验证，必要时修复并提交；将真实产物发到 issue comments。返回 commit、validatedBaseSha 和 validationCommentId。保留工作树和 In Progress。 |
-| `pr` | executor | 只使用上一阶段已验证的 commit：推送 issue 分支到 origin，用 gh 开以记录的 main/master 为 base 的 PR，把验证产物（含截图）内嵌进 PR，把 PR 链接发到 issue comments 并改 Done；不合并 PR，agent 与 watcher 均保留工作树、本地分支和 Herdr workspace，由用户手动清理；在 summary 中给出保留的 worktree 绝对路径和分支名，交回 orchestrator 核对收尾。 |
+| `pr` | executor | 只使用上一阶段已验证的 commit：推送 issue 分支到 origin，用 gh 开以记录的 main/master 为 base 的 PR，把验证产物（含截图）内嵌进 PR，把 PR 链接发到 issue comments，再用助手 `review` 改为 `inReviewState`（默认 In Review，类型为 `started`）并读回具体状态，保持待评审，不改 Done；不合并 PR，agent 与 watcher 均保留工作树、本地分支和 Herdr workspace，由用户手动清理；在 summary 中给出保留的 worktree 绝对路径和分支名，交回 orchestrator 核对收尾。 |
 
 简单任务通常按 `analyze → implement → validate → pr` 执行；复杂任务增加 `plan → todos`。每个 issue 由 watcher 用 `herdr worktree create` 建立独立 worktree 和 Herdr workspace；orchestrator 与所有 stage 都由所属角色的配置在该 workspace 的独立 pane 中启动为交互式 agent session（一次一个，结束即关闭 pane），通过同一个 worktree 和结构化记录交接。
 

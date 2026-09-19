@@ -4,7 +4,8 @@
       "repo": "/absolute/path/to/repository",
       "team": "ENG",
       "project": "Project name or UUID",
-      "todoState": "Todo"
+      "todoState": "Todo",
+      "inReviewState": "In Review"
     }
   ],
   "defaults": {

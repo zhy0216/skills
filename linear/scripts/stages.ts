@@ -2,13 +2,13 @@ import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { STAGES, STAGE_ROLES, waitForAgentCapacity, type Herdr, type Role, type Stage, type RoleAgents, runAgent } from "./agents";
 import { command, digest, LinearClient } from "./linear-client";
-import { readTodoSection } from "./linear-issue";
+import { isInReview, readTodoSection } from "./linear-issue";
 
 export type RunContext = {
   runId: string; issueId: string; identifier: string; issueUrl: string; repo: string;
   baseBranch: "main" | "master"; baseSha: string; branch: string; worktree: string; runDir: string;
   workspaceId: string; rootPane: string;
-  inProgressState?: string; doneState?: string; todoState: string; linearProfile?: string;
+  inProgressState?: string; inReviewState?: string; todoState: string; linearProfile?: string;
   skill: string; helper: string;
 };
 export type StageResult = {
@@ -23,8 +23,8 @@ const instructions: Record<Stage, string> = {
   plan: "按 linear-auto-dev 写实现 plan，作为通过 issueId 原生关联的 Linear Document 发布，返回 document ID/URL。只完成 plan 阶段。",
   todos: "读取上一阶段 Document，将有编号、依赖和验收条件的 checklist 发布到 issue description 的管理小节，保留原始需求。只完成任务拆解。",
   implement: "在既有 issue worktree 中实现完整需求；复杂任务按 Linear Document/description 执行并同步 checkbox；运行必要开发检查并提交。保留 issue worktree，交给后续 validate 阶段。",
-  validate: "在 issue worktree 将分支集成到当前记录的 main/master 最新提交；修复相关问题并提交，验证最终代码，把真实 validation 产物发布到 issue comments。返回完整 commit、validatedBaseSha、validationCommentId。此阶段不推送分支、不开 PR，也不改 Done。",
-  pr: "读取上一阶段 validate 的 commit、validatedBaseSha、validationCommentId；把 issue 分支推送到 origin，用 gh 创建以记录的 main/master 为 base 的 PR，PR 正文内嵌验证产物与截图，把 PR 链接发到 issue comments 并改 Done；不合并 PR、不推送主分支。目标主分支相较 validatedBaseSha 已前进且尚未推送时返回 needs_validation，由 watcher 再次调度 validate；此阶段不重写或重新验证代码。agent 与 watcher 均不得清理 issue worktree、本地分支或 Herdr workspace，全部保留给用户手动清理；在 summary 中给出 worktree 绝对路径和分支名。",
+  validate: "在 issue worktree 将分支集成到当前记录的 main/master 最新提交；修复相关问题并提交，验证最终代码，把真实 validation 产物发布到 issue comments。返回完整 commit、validatedBaseSha、validationCommentId。此阶段保留 In Progress，不推送分支、不开 PR。",
+  pr: "读取上一阶段 validate 的 commit、validatedBaseSha、validationCommentId；把 issue 分支推送到 origin，用 gh 创建以记录的 main/master 为 base 的 PR，PR 正文内嵌验证产物与截图，把 PR 链接发到 issue comments，再用助手 review 将状态改为 context.inReviewState（默认 In Review，类型 started），保留待评审状态，不改 Done/completed；不合并 PR、不推送主分支。目标主分支相较 validatedBaseSha 已前进且尚未推送时返回 needs_validation，由 watcher 再次调度 validate；此阶段不重写或重新验证代码。agent 与 watcher 均不得清理 issue worktree、本地分支或 Herdr workspace，全部保留给用户手动清理；在 summary 中给出 worktree 绝对路径和分支名。",
 };
 
 export function parseStageResult(value: any, stage: Stage, issueId: string): StageResult {
@@ -241,9 +241,9 @@ export async function runStages(context: RunContext, agents: RoleAgents, options
         catch { throw new Error(`Could not read origin for ${context.repo}; the issue branch must be pushed before opening the PR`); }
         if (remote.trim().split("\t")[0] !== result.commit) throw new Error(`Branch ${context.branch} on origin does not point at the verified commit`);
         if (!(await options.client.comments(context.issueId)).some((comment) => comment.body.includes(result.prUrl!))) throw new Error("pr did not post the pull request link to the issue");
-        if ((await options.client.issue(context.issueId)).state.type !== "completed") throw new Error("pr did not complete the Linear issue");
+        if (!isInReview((await options.client.issue(context.issueId)).state, context.inReviewState)) throw new Error(`pr did not put the Linear issue in ${context.inReviewState ?? "In Review"} (started)`);
         finished = { issueId: context.issueId, outcome: "completed", baseBranch: context.baseBranch, commit: result.commit!, prUrl: result.prUrl!, validationCommentId: result.validationCommentId!, summary: result.summary };
-        reviewReason = "The executor pushed the verified commit and opened a pull request with the validation artifacts; review the handoff and return completed, or report a concrete unresolved blocker.";
+        reviewReason = "The executor pushed the verified commit, opened a pull request with the validation artifacts, and left the Linear issue In Review; review the handoff and return completed, or report a concrete unresolved blocker. The completed outcome describes this run, not the Linear issue status.";
         break;
       }
     }

@@ -48,6 +48,10 @@ if (context.role === "creator") {
   process.exit(0);
 }
 if (context.role === "orchestrator") {
+  if (context.canComplete && initial.finalStateOverride) {
+    initial.issues.find((issue: any) => issue.id === context.issueId).state = initial.finalStateOverride;
+    await Bun.write(statePath, JSON.stringify(initial));
+  }
   let nextStage = context.suggestedStage;
   const last = context.stageHistory.at(-1);
   if (initial.advanceBaseDuringReview && last?.stage === "validate" && last.attempt === 1 && nextStage === "pr") {
@@ -66,7 +70,7 @@ if (context.role === "orchestrator") {
     issueId: context.issueId, outcome: initial.orchestratorBlock ? "blocked" : initial.orchestratorPrematureComplete || context.canComplete ? "completed" : "dispatch",
     nextStage: initial.orchestratorBlock || initial.orchestratorPrematureComplete || context.canComplete ? null : nextStage,
     instructions: `Coordinator instruction for ${nextStage}: satisfy the issue and preserve existing acceptance.`,
-    summary: initial.orchestratorBlock ?? (context.canComplete ? "Reviewed the executor's verified pull request and Linear completion." : "Reviewed the current artifacts and selected the next stage."),
+    summary: initial.orchestratorBlock ?? (context.canComplete ? "Reviewed the executor's verified pull request and Linear In Review status." : "Reviewed the current artifacts and selected the next stage."),
   };
   await emitResult(decision);
   process.exit(0);
@@ -129,7 +133,12 @@ switch (context.stage) {
     if (!initial.falseComplete) git(context.worktree, "push", "origin", context.branch);
     const path = join(context.stageDir, "pr.md"); await Bun.write(path, `Opened PR ${result.prUrl} for ${result.commit} against ${context.baseBranch}`);
     helper("comment", context.issueId, "--file", path, "--key", `${context.runId}-pr`);
-    helper("done", context.issueId);
+    helper("review", context.issueId, ...(context.inReviewState ? ["--state", context.inReviewState] : []));
+    if (initial.prStateOverride) {
+      const state = await Bun.file(statePath).json();
+      state.issues.find((issue: any) => issue.id === context.issueId).state = initial.prStateOverride;
+      await Bun.write(statePath, JSON.stringify(state));
+    }
     break;
   }
   default: throw new Error(`Unhandled stage ${context.stage}`);

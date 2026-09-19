@@ -5,7 +5,7 @@
       "team": "EZT",
       "todoState": "Todo",
       "inProgressState": "In Progress",
-      "doneState": "Done"
+      "inReviewState": "In Review"
     }
   ],
   "defaults": {

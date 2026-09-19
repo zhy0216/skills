@@ -25,10 +25,11 @@ bun "$helper" list-todo --state "Ready for development"
 ## 写入
 
 ```bash
-# 创建 worktree 之后才执行 start；推送分支、开 PR、发布验证评论之后才执行 done。
+# 创建 worktree 之后才执行 start；推送分支、开 PR、发布验证评论之后才执行 review。
 bun "$helper" start ENG-123
 bun "$helper" start ENG-123 --state "In Progress"
-bun "$helper" done ENG-123 --state "Done"
+bun "$helper" review ENG-123
+bun "$helper" review ENG-123 --state "In Review"
 
 # plan 是原生 issue Document，即使 issue 没有 Project 也可创建。
 bun "$helper" plan ENG-123 --file /tmp/run/plan.md
@@ -41,7 +42,7 @@ bun "$helper" comment ENG-123 --file /tmp/run/validation.md \
   --key run-id-commit-sha --artifact /tmp/run/test.log --artifact /tmp/run/screenshot.png
 ```
 
-`start/done` 先读取 Team 的 workflow states，按 `started/completed` 类别和实际名称解析 ID，再更新并读回。多个候选无法确定时使用上下文中的具体状态，不硬编码状态 UUID。
+`start/review` 先读取 Team 的 workflow states，在 `started` 类别内按实际名称或 ID 解析，再更新并读回。`start` 默认 `In Progress`；`review` 默认严格匹配 `In Review`，自定义评审状态使用 context 的 `inReviewState` 作为 `--state`，缺失或歧义时失败，不回退到其他状态。开 PR 后保留评审状态，不调用 `done`。不硬编码状态 UUID。
 
 `plan` 在 `issue.documents` 中按稳定标题查找，同名多份时报告歧义。通过 `documentCreate(input: { title, content, issueId })` 创建原生关联文档；CLI 的 `documents create --project` 不能替代这个关联。已有文档用 `documentUpdate`。每次写入后读回，返回 ID/URL。
 

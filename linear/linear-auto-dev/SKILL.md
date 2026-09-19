@@ -75,4 +75,4 @@ plan 和任务队列发布后，在当前 issue worktree 立即开始实现，�
 
 ## 4. 交回验证与开 PR
 
-所有必要实现步骤完成并有证据后，回到 finish-linear-todo 的第 3、4 阶段：验证最终集成代码、把 validation 实际产物发到 issue comments、推送 issue 分支并开 PR、把验证产物（含截图）内嵌进 PR、核对结果并改 Done。任务 checkbox 全部完成并不表示 PR 已开；最终结果以这几项操作的真实读回为准。
+所有必要实现步骤完成并有证据后，回到 finish-linear-todo 的第 3、4 阶段：验证最终集成代码、把 validation 实际产物发到 issue comments、推送 issue 分支并开 PR、把验证产物（含截图）内嵌进 PR、核对结果并设为 In Review（或 `inReviewState` 指定的 `started` 状态），保留待评审，不改 Done。任务 checkbox 全部完成并不表示 PR 已开；最终结果以这几项操作的真实读回为准。
