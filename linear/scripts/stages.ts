@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { STAGES, STAGE_ROLES, waitForAgentCapacity, type Herdr, type Role, type Stage, type RoleAgents, runAgent } from "./agents";
+import { STAGES, STAGE_ROLES, waitForAgentCapacity, type Herdr, type Role, type Stage, type RoleAgents, runAgentWithRetry } from "./agents";
 import { command, digest, LinearClient } from "./linear-client";
 import { isInReview, readTodoSection } from "./linear-issue";
 
@@ -19,7 +19,7 @@ export type StageResult = {
 export type FinishResult = { issueId: string; outcome: "completed"; baseBranch: string; commit: string; prUrl: string; validationCommentId: string; summary: string };
 const SUITE = resolve(import.meta.dir, "..");
 const instructions: Record<Stage, string> = {
-  analyze: "worktree 已由 watcher 通过 Herdr 创建并检出 issue 分支，你的工作目录就是它；核对 HEAD 与 baseSha 后读取 issue、依赖和仓库约束，再改 In Progress；分析复杂度，返回 simple 或 complex。此阶段不实现业务代码，也不重新创建 worktree。",
+  analyze: "worktree 已由 watcher 通过 Herdr 创建并检出 issue 分支，你的工作目录就是它；核对 HEAD 与 baseSha 后读取 issue、依赖和仓库约束，再改 In Progress（本阶段固定职责，协调指令不得覆盖为「不改状态/文档」）；分析复杂度，返回 simple 或 complex。此阶段不实现业务代码，也不重新创建 worktree。",
   plan: "按 linear-auto-dev 写实现 plan，作为通过 issueId 原生关联的 Linear Document 发布，返回 document ID/URL。只完成 plan 阶段。",
   todos: "读取上一阶段 Document，将有编号、依赖和验收条件的 checklist 发布到 issue description 的管理小节，保留原始需求。只完成任务拆解。",
   implement: "在既有 issue worktree 中实现完整需求；复杂任务按 Linear Document/description 执行并同步 checkbox；运行必要开发检查并提交。保留 issue worktree，交给后续 validate 阶段。",
@@ -125,7 +125,7 @@ export async function runStages(context: RunContext, agents: RoleAgents, options
     const name = agentName(context.identifier, `o${turn}`);
     await waitForCapacity(name);
     options.log("orchestrator-start", { issue: context.identifier, turn, agent: agent.agent, model: agent.model, reasoningEffort: agent.reasoningEffort, name, stageDir });
-    const raw = await runAgent(agent, {
+    const raw = await runAgentWithRetry(agent, {
       herdr: options.herdr, workspaceId: context.workspaceId, rootPane: context.rootPane, name, cwd: context.worktree,
       stageDir, contextPath, prompt, schemaPath, timeoutMs: deadline - Date.now(), signal: options.signal, env: options.env,
       onPane: (paneId) => options.onAgent(role, null, { name, paneId }),
@@ -159,7 +159,7 @@ export async function runStages(context: RunContext, agents: RoleAgents, options
     const name = agentName(context.identifier, `${stage.slice(0, 2)}${attempt}`);
     await waitForCapacity(name);
     options.log("stage-start", { issue: context.identifier, role, stage, attempt, agent: agent.agent, model: agent.model, reasoningEffort: agent.reasoningEffort, name, stageDir });
-    const raw = await runAgent(agent, {
+    const raw = await runAgentWithRetry(agent, {
       herdr: options.herdr, workspaceId: context.workspaceId, rootPane: context.rootPane, name, cwd: context.worktree,
       stageDir, contextPath, prompt, schemaPath, timeoutMs: deadline - Date.now(), signal: options.signal, env: options.env,
       onPane: (paneId) => options.onAgent(role, stage, { name, paneId }),

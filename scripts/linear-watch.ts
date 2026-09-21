@@ -36,10 +36,11 @@ export type Config = AgentSettings & {
   timeoutMinutes?: number;
   maxActiveAgents?: number;
   creation?: { schedule?: string; maxIssuesPerRun?: number; maxBacklogIssues?: number };
+  maxIssues?: number;
 };
 export type Runtime = Config & {
   linearBin: string; codexBin: string; opencodeBin: string; stateDir: string; timeoutMinutes: number;
-  maxActiveAgents: number; herdrSocket: string; herdr: Herdr; roleAgents: RoleAgents;
+  maxActiveAgents: number; maxIssues: number; herdrSocket: string; herdr: Herdr; roleAgents: RoleAgents;
 };
 type Result = { issueId: string; outcome: "completed" | "blocked" | "failed"; baseBranch: string; commit: string | null; prUrl: string | null; validationCommentId: string | null; summary: string };
 
@@ -74,6 +75,8 @@ export async function loadConfig(path: string, overrides: Pick<Config, "linearBi
       if (typeof Bun.cron?.parse === "function" && !Bun.cron.parse(schedule)) throw new Error("Invalid creation.schedule");
     }
   }
+  const maxIssues = config.maxIssues ?? Number.POSITIVE_INFINITY;
+  if (maxIssues !== Number.POSITIVE_INFINITY && (!Number.isInteger(maxIssues) || maxIssues < 1)) throw new Error("maxIssues must be a positive integer");
   const binary = (name: string) => {
     const found = Bun.which(name);
     if (!found) throw new Error(`Executable not found: ${name}`);
@@ -81,7 +84,7 @@ export async function loadConfig(path: string, overrides: Pick<Config, "linearBi
   };
   const herdrSocket = config.herdrSocket ? resolve(dirname(path), config.herdrSocket) : process.env.HERDR_SOCKET_PATH || DEFAULT_HERDR_SOCKET;
   return {
-    ...config, routes, timeoutMinutes, maxActiveAgents, herdrSocket,
+    ...config, routes, timeoutMinutes, maxActiveAgents, maxIssues, herdrSocket,
     linearBin: binary(config.linearBin ?? "linear-cli"),
     codexBin: Bun.which(config.codexBin ?? "codex") ?? config.codexBin ?? "codex",
     opencodeBin: Bun.which(config.opencodeBin ?? "opencode") ?? config.opencodeBin ?? "opencode",
@@ -120,6 +123,7 @@ export async function runOnce(config: Runtime, options: { mode?: Mode; dryRun?: 
   const client = new LinearClient(config.linearBin, config.linearProfile);
   const summary = { completed: 0, failed: 0, skipped: 0, planned: 0 };
   let pickedUp = false;
+  let dispatched = 0;
   const log = (event: string, detail: Record<string, unknown> = {}) => {
     const line = JSON.stringify({ time: new Date().toISOString(), event, ...detail });
     console.log(line);
@@ -132,7 +136,7 @@ export async function runOnce(config: Runtime, options: { mode?: Mode; dryRun?: 
   const issues = [...new Map((await client.todoIssues()).map((issue) => [issue.id, issue])).values()]
     .sort((a, b) => (a.priority || 5) - (b.priority || 5) || a.createdAt.localeCompare(b.createdAt) || a.identifier.localeCompare(b.identifier));
   for (const issue of issues) {
-    if (options.signal?.aborted || (options.singleIssue && pickedUp)) break;
+    if (options.signal?.aborted || (options.singleIssue && pickedUp) || dispatched >= config.maxIssues) break;
     const matches = config.routes.filter((route) => matchesRoute(issue, route));
     if (!matches.length) { summary.skipped++; continue; }
     if (matches.length > 1) { summary.failed++; log("ambiguous-route", { issue: issue.identifier }); continue; }
@@ -174,6 +178,7 @@ export async function runOnce(config: Runtime, options: { mode?: Mode; dryRun?: 
       log("start", { issue: fresh.identifier, repo, baseBranch, runDir, workspaceId: context.workspaceId, worktree: context.worktree });
       // Count the dispatch attempt, so a failed launch also ends a single-issue test run.
       pickedUp = true;
+      dispatched++;
       const result = await runStages(context, config.roleAgents, {
         herdr: config.herdr, client, timeoutMs: config.timeoutMinutes * 60_000, signal: options.signal, log,
         maxAgents: config.maxActiveAgents,
@@ -239,6 +244,7 @@ Modes:
 Run options:
   --once runs all eligible issues/repositories once.
   --test runs one eligible issue (execute) or repository (create), then exits even on dispatch failure.
+  maxIssues caps how many issues one execute scan dispatches (default: all matching); later scans pick up the rest.
   --dry-run reads Linear/Git and prints the resolved scope and agents without launching workers or writing logs.
   --install registers an OS cron job; --uninstall removes it. Each mode has its own job name.
 Agents:

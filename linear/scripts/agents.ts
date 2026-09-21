@@ -185,6 +185,23 @@ export type HerdrLaunch = {
   onPane?: (paneId: string) => void;
 };
 
+// Agent CLIs occasionally die while starting (observed: opencode SIGILL bursts lasting under a
+// minute in its snapshot/watcher bootstrap, plus Herdr startup timeouts). A prompt only reaches a
+// fully started agent, so relaunching the stage in a fresh pane is safe; anything after the prompt
+// is not retried here. Backoff rides out a burst instead of burning attempts inside it.
+const RETRY_BACKOFF_MS = [3_000, 10_000, 30_000, 60_000, 120_000, 240_000, 300_000];
+
+export async function runAgentWithRetry(agent: ResolvedAgent, input: HerdrLaunch) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await runAgent(agent, input); }
+    catch (error: any) {
+      const failedToStart = /agent_not_running|timed out waiting for agent startup/.test(String(error?.message));
+      if (attempt >= RETRY_BACKOFF_MS.length || input.signal?.aborted || !failedToStart) throw error;
+      await Bun.sleep(RETRY_BACKOFF_MS[attempt]!);
+    }
+  }
+}
+
 // Every stage runs as a named agent in a dedicated worker pane inside the issue's Herdr
 // workspace. The pane is created fresh per stage and always closed afterwards, which reaps
 // the agent process; all handoff happens through files on disk (result.json) and Linear.
@@ -206,11 +223,22 @@ export async function runAgent(agent: ResolvedAgent, input: HerdrLaunch) {
   input.onPane?.(paneId);
 
   const promptAgent = async (text: string, waitMs: number) => {
-    const out = await herdrJson(input.herdr, ["agent", "prompt", input.name, text, "--wait", "--timeout", String(waitMs)], waitMs);
-    const status = out?.result?.agent?.agent_status;
-    if (status === "blocked") {
-      await captureTranscript();
-      throw new Error(`${agent.agent} agent ${input.name} is blocked waiting for interactive input; inspect ${transcriptPath}`);
+    // OpenCode's TUI can still be initializing right after 'agent start' even though herdr reports
+    // interactive_ready. A prompt sent then is dropped and reported as agent_prompt_stalled; the
+    // input box stays empty, so retrying after a short pause is safe. Codex is ready immediately.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        const out = await herdrJson(input.herdr, ["agent", "prompt", input.name, text, "--wait", "--timeout", String(waitMs)], waitMs);
+        const status = out?.result?.agent?.agent_status;
+        if (status === "blocked") {
+          await captureTranscript();
+          throw new Error(`${agent.agent} agent ${input.name} is blocked waiting for interactive input; inspect ${transcriptPath}`);
+        }
+        return;
+      } catch (error: any) {
+        if (attempt >= 2 || input.signal?.aborted || !String(error?.message).includes("agent_prompt_stalled")) throw error;
+        await Bun.sleep(3_000);
+      }
     }
   };
   const captureTranscript = async () => {
@@ -235,7 +263,7 @@ export async function runAgent(agent: ResolvedAgent, input: HerdrLaunch) {
     try {
       await promptAgent(input.prompt, left());
       if (!(await Bun.file(resultPath).exists())) {
-        await promptAgent(`尚未在 ${resultPath} 找到本阶段结果。请立即把符合 ${input.schemaPath} 的 JSON 写入该文件（覆盖占位内容即可），并把同一 JSON 作为最终回答；不要执行其他工作。`, left());
+        await promptAgent(`本阶段结束时必须在 ${resultPath} 写入符合 ${input.schemaPath} 的 JSON，并把同一 JSON 作为最终回答。若你仍在执行本阶段工作，请继续完成，完成后再写入结果文件，不要提前结束或省略未完成的工作；若工作已完成，请立即写入结果文件。`, left());
       }
     } catch (error) {
       await captureTranscript();

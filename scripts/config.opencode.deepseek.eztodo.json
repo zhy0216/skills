@@ -1,0 +1,30 @@
+{
+  "routes": [
+    {
+      "repo": "/home/yang/workspace/eztodo",
+      "team": "EZT",
+      "todoState": "Todo",
+      "inProgressState": "In Progress",
+      "doneState": "Done",
+      "baseBranch": "main"
+    }
+  ],
+  "defaults": {
+    "agent": "opencode",
+    "model": "opencode-go/deepseek-v4.1-flash",
+    "reasoningEffort": null,
+    "extraArgs": ["--agent", "build"]
+  },
+  "agents": {
+    "orchestrator": {},
+    "planner": {},
+    "executor": {}
+  },
+  "timeoutMinutes": 720,
+  "maxActiveAgents": 8,
+  "maxIssues": 10,
+  "linearBin": "/home/yang/.cargo/bin/linear-cli",
+  "opencodeBin": "/home/yang/.bun/bin/opencode",
+  "herdrBin": "/home/yang/.local/bin/herdr",
+  "herdrSocket": "/home/yang/.config/herdr/herdr.sock"
+}

@@ -439,6 +439,33 @@ describe("watcher and Git integration", () => {
     await expect(s.config({ maxActiveAgents: 2.5 })).rejects.toThrow("maxActiveAgents");
   });
 
+  test("maxIssues caps dispatched issues per scan and only accepts positive integers", async () => {
+    const s = await setup([makeIssue(), makeIssue({ identifier: "ENG-2", priority: 3 })]); await initRepo(s.root);
+    expect((await s.config()).maxIssues).toBe(Number.POSITIVE_INFINITY);
+    const result = await runOnce(await s.config({ maxIssues: 1 }));
+    expect(result).toEqual({ completed: 1, failed: 0, skipped: 0, planned: 0 });
+    expect((await s.state()).issues[0].state.name).toBe("In Review");
+    expect((await s.state()).issues[1].state.name).toBe("Todo");
+    await expect(s.config({ maxIssues: 0 })).rejects.toThrow("maxIssues");
+    await expect(s.config({ maxIssues: 1.5 })).rejects.toThrow("maxIssues");
+  }, 15_000);
+
+  test("retries an agent that dies before its prompt starts", async () => {
+    const s = await setup(); await initRepo(s.root);
+    await Bun.write(join(s.root, "herdr-state.json"), JSON.stringify({ seq: 0, workspaces: {}, panes: {}, agents: {}, startFailures: 1 }));
+    const result = await runOnce(await s.config());
+    expect(result.completed).toBe(1);
+    expect((await s.state()).issues[0].state.name).toBe("In Review");
+  }, 15_000);
+
+  test("retries a stalled agent prompt instead of failing the stage", async () => {
+    const s = await setup(); await initRepo(s.root);
+    await Bun.write(join(s.root, "herdr-state.json"), JSON.stringify({ seq: 0, workspaces: {}, panes: {}, agents: {}, promptStalls: 1 }));
+    const result = await runOnce(await s.config());
+    expect(result.completed).toBe(1);
+    expect((await s.state()).issues[0].state.name).toBe("In Review");
+  }, 15_000);
+
   test("counts only non-done agents reported by herdr agent list", async () => {
     const s = await setup();
     await Bun.write(join(s.root, "herdr-state.json"), JSON.stringify({

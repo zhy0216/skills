@@ -7,7 +7,7 @@ import { basename, dirname, join } from "node:path";
 
 type Pane = { workspace: string; cwd: string; env: Record<string, string>; alive: boolean; childPid?: number };
 type Agent = { pane: string; kind: string; args: string[]; alive: boolean; prompts: number; status?: string };
-type State = { seq: number; workspaces: Record<string, { label: string; closed: boolean }>; panes: Record<string, Pane>; agents: Record<string, Agent> };
+type State = { seq: number; workspaces: Record<string, { label: string; closed: boolean }>; panes: Record<string, Pane>; agents: Record<string, Agent>; promptStalls?: number; startFailures?: number };
 
 const statePath = process.env.LINEAR_HERDR_STATE;
 if (!statePath) { process.stderr.write("LINEAR_HERDR_STATE is not set"); process.exit(1); }
@@ -93,6 +93,7 @@ if (group === "agent" && sub === "start") {
   const dashDash = args.indexOf("--");
   const agentArgs = dashDash >= 0 ? args.slice(dashDash + 1) : [];
   if (!/^[a-z][a-z0-9_-]{0,31}$/.test(name ?? "")) fail("invalid_name", `invalid agent name ${name}`);
+  if (state.startFailures && state.startFailures > 0) { state.startFailures -= 1; save(state); fail("timeout", "timed out waiting for agent startup"); }
   if (!state.panes[pane!] || !state.panes[pane!].alive) fail("pane_not_found", `pane ${pane} not found`);
   if (state.agents[name] && state.agents[name].alive && state.panes[state.agents[name]!.pane]?.alive) fail("agent_exists", `agent ${name} already running`);
   state.agents[name!] = { pane: pane!, kind: kind!, args: agentArgs, alive: true, prompts: 0 };
@@ -106,6 +107,7 @@ if (group === "agent" && sub === "prompt") {
   if (!agent || !agent.alive) fail("agent_not_found", `agent target ${name} not found`);
   const pane = state.panes[agent.pane];
   if (!pane || !pane.alive) fail("pane_not_found", `pane ${agent.pane} not found`);
+  if (state.promptStalls && state.promptStalls > 0) { state.promptStalls -= 1; save(state); fail("agent_prompt_stalled", "simulated prompt stall"); }
   agent.prompts += 1;
   const timeoutMs = Number(flag("--timeout") ?? "0");
   const child = Bun.spawn([agent.kind, ...agent.args], {
