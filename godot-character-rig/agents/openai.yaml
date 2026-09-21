@@ -1,0 +1,4 @@
+interface:
+  display_name: "Godot 角色拆图与骨骼"
+  short_description: "从单张角色原画拆分并补全部件，生成可编辑的 Godot 原生 2D 骨骼与动画"
+  default_prompt: "使用 $godot-character-rig，根据我的角色原画拆分并补全部件，结合 godot-2d-animation 制作 Godot 原生骨骼场景，并验证回拼和关节试动。"
