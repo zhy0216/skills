@@ -1,0 +1,3 @@
+interface:
+  display_name: "VoxCPM CLI"
+  short_description: "在本机通过 VoxCPM CLI 完成语音合成、音色设计、声音克隆与批量配音"
